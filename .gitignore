@@ -47,7 +47,6 @@ cover/
 
 # dotenv environment variables file
 .env
-env-example.txt
 
 # Allure results and reports
 allure-results/
@@ -71,7 +70,7 @@ env/
 ENV/
 .venv/
 .env/
-.env
+
 
 # mypy
 .mypy_cache/

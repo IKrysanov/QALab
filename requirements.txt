@@ -1,0 +1,10 @@
+requests
+pytest
+allure-pytest
+curlify
+dotenv
+jsonschema
+pytest-xdist
+pytest-dependency
+pytest-retry
+pytest-rerunfailures

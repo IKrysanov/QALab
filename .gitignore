@@ -55,6 +55,7 @@ allure-report/
 pytest_html/
 report.html
 assets/
+style.css
 
 # VS Code settings
 .vscode/

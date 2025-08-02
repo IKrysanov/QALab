@@ -106,22 +106,27 @@ class AsyncAPIClient:
 
         return response
 
-    # Shortcuts
+    @allure.step("Making API request with method GET to path {path}")
     async def get(self, path: str, **kwargs) -> httpx.Response:
         return await self._request("GET", path, **kwargs)
 
+    @allure.step("Making API request with method POST to path {path}")
     async def post(self, path: str, **kwargs) -> httpx.Response:
         return await self._request("POST", path, **kwargs)
 
+    @allure.step("Making API request with method PUT to path {path}")
     async def put(self, path: str, **kwargs) -> httpx.Response:
         return await self._request("PUT", path, **kwargs)
 
+    @allure.step("Making API request with method DELETE to path {path}")
     async def delete(self, path: str, **kwargs) -> httpx.Response:
         return await self._request("DELETE", path, **kwargs)
 
+    @allure.step("Making API request with method PATCH to path {path}")
     async def patch(self, path: str, **kwargs) -> httpx.Response:
         return await self._request("PATCH", path, **kwargs)
 
+    @allure.step("Closing the API client")
     async def close(self):
         await self.client.aclose()
 

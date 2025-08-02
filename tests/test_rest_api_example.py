@@ -31,22 +31,23 @@ async def test_async_create_example_ok(async_empty_session, image_id):
 @pytest.mark.asyncio
 async def test_async_create_many_example(async_empty_session):
     paths = [
-        "/api/resource/1",
-        "/api/resource/2",
-        "/api/resource/3",
-        "/api/resource/4",
-        "/api/resource/5",
-        "/api/resource/6",
-        "/api/resource/7",
-        "/api/resource/8",
-        "/api/resource/9",
-        "/api/resource/10",
-        "/api/resource/11",
-        "/api/resource/12",
-        "/api/resource/13",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
+        "/images/6euYVVE_u",
     ]
 
-    tasks = [async_empty_session.get(path=path) for path in paths]
+    tasks = [async_empty_session.get(path=path, schema=schema_image_200) for path in paths]
 
     await asyncio.gather(*tasks)
 

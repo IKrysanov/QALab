@@ -1,8 +1,8 @@
 import pytest
 import asyncio
 
-from src.clients.sync_http_client import APIClient
-from src.clients.async_http_client import AsyncAPIClient
+from src.clients_http.sync_http_client import APIClient
+from src.clients_http.async_http_client import AsyncAPIClient
 from dotenv import load_dotenv
 import os
 

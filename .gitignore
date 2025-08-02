@@ -51,6 +51,9 @@ cover/
 # Allure results and reports
 allure-results/
 allure-report/
+# Pytest HTML reports
+pytest_html/
+report.html
 
 # VS Code settings
 .vscode/

@@ -10,3 +10,4 @@ pytest-retry
 pytest-rerunfailures
 httpx
 pytest-asyncio
+pytest-html

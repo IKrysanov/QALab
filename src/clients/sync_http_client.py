@@ -3,6 +3,7 @@ import time
 from src.utils.validator_json.validator import ResponseValidator
 import requests
 from requests import Session, Response
+from requests.auth import HTTPBasicAuth
 import allure
 from curlify import to_curl
 
@@ -50,6 +51,7 @@ class APIClient:
             debug: bool = False,
             endpoint_prefix: str = "",
             headers: Optional[Dict[str, str]] = None,
+            timeout: int = 10,
             **kwargs,
     ):
         self.session = session or requests.Session()
@@ -66,6 +68,7 @@ class APIClient:
         self.debug = debug
         self.endpoint_prefix = endpoint_prefix
         self.default_headers = headers or {}
+        self.timeout = timeout
 
     def _request(
             self,
@@ -81,6 +84,7 @@ class APIClient:
         log_info = kwargs.pop("log_info", self.log_info)
         debug = kwargs.pop("debug", self.debug)
         headers = kwargs.pop("headers", {})
+        timeout = kwargs.pop("timeout", self.timeout)
 
         combined_headers = {**self.default_headers, **headers}
         kwargs["headers"] = combined_headers
@@ -102,9 +106,19 @@ class APIClient:
             breakpoint()
 
         start_time = time.time()
-        response = self.session.request(method.upper(), url, verify=self.verify, cert=self.cert, **kwargs)
+        response = self.session.request(
+            method.upper(), url, verify=self.verify, cert=self.cert, timeout=timeout, **kwargs
+        )
         end_time = time.time()
         response_time = end_time - start_time
+        if log_info:
+            logger.info(f"Request method: {method.upper()}")
+            logger.info(f"Request headers: {combined_headers}")
+            logger.info(f"Request body: {kwargs.get('data', kwargs.get('json', ''))}")
+            logger.info(f"Response status code: {response.status_code}")
+            logger.info(f"Response body: {response.text[:200]}...")
+            logger.info(f"Response headers: {response.headers}")
+
         status_code = response.status_code
 
         if response_time < self.MAX_RESPONSE_TIME:
@@ -135,15 +149,18 @@ class APIClient:
             attachment_type=allure.attachment_type.TEXT
         )
 
-        if assert_time:
-            with allure.step("Assert response time"):
-                assert response_time < self.MAX_RESPONSE_TIME, f"Response time exceeded: {response_time:.2f} seconds"
-
         if assert_status:
             with allure.step("Assert status code"):
+                allure.attach(
+                    str(response.status_code), name="Status Code", attachment_type=allure.attachment_type.TEXT
+                )
                 assert status_code == expected_status, f"Expected status {expected_status}, got {status_code}"
 
         if validator:
+            content_type = response.headers.get("Content-Type", "").lower()
+            if "application/json" not in content_type:
+                raise ApiError(f"Unexpected Content-Type: {content_type}", response=response)
+
             response_json = None
 
             if response.content:
@@ -155,7 +172,9 @@ class APIClient:
             if 200 <= status_code < 300:
                 if status_code == 204:
                     if response.content:
-                        raise ApiError("Expected no content for 204 response, but got content.", response=response)
+                        raise ApiError(
+                            "Expected no content for 204 response, but got content.", response=response
+                        )
                 elif schema:
                     self.validate_response.validate_success(response_json, schema)
 
@@ -171,7 +190,22 @@ class APIClient:
                 else:
                     self.validate_response.validate_default(status_code, response_json)
 
+        if assert_time:
+            with allure.step("Assert response time"):
+                allure.attach(
+                    f"{response_time} sec.", name="Response Time", attachment_type=allure.attachment_type.TEXT
+                )
+                assert response_time < self.MAX_RESPONSE_TIME, f"Response time exceeded: {response_time:.2f} seconds"
+
         return response
+
+    @allure.step("Setting basic authentication for session")
+    def basic_auth(self, username: str, password: str):
+        self.session.auth = HTTPBasicAuth(username, password)
+
+    @allure.step("Setting bearer token authentication for session")
+    def set_bearer_token(self, token: str):
+        self.default_headers["Authorization"] = f"Bearer {token}"
 
     @allure.step("Performing GET request {path}")
     def get(self, path: str, **kwargs: Any) -> Response:
@@ -208,6 +242,24 @@ class APIClient:
             logger.info("Session closed.")
         else:
             logger.warning("No session to close.")
+
+    @allure.step("Downloading file from {path}")
+    def download_file(self, path: str, save_to: str, **kwargs: Any) -> None:
+        response = self._request("GET", path, stream=True, **kwargs)
+
+        if response.status_code == HTTPStatus.OK:
+            with open(save_to, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logger.info(f"File downloaded and saved to: {save_to}")
+        else:
+            raise ApiError("Failed to download file", response.status_code, response)
+
+    @allure.step("Uploading file to {path}")
+    def upload_file(self, path: str, file_field: str, file_path: str, **kwargs: Any) -> Response:
+        with open(file_path, 'rb') as f:
+            files = {file_field: f}
+            return self._request("POST", path, files=files, **kwargs)
 
     def __enter__(self):
         return self

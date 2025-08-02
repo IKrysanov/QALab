@@ -1,5 +1,6 @@
 import pytest
 from http import HTTPStatus
+import asyncio
 
 
 from schemas.schemas import schema_image_200
@@ -7,7 +8,7 @@ from schemas.schemas import schema_image_200
 
 @pytest.mark.parametrize("image_id", ["6euYVVE_u"])
 @pytest.mark.dependency()
-def test_example_ok(empty_session, image_id):
+def test_sync_example_ok(empty_session, image_id):
     """
     Example test function to demonstrate the use of the session_user fixture.
     """
@@ -17,6 +18,37 @@ def test_example_ok(empty_session, image_id):
         assert_time=True,
         schema=schema_image_200,
     )
+
+@pytest.mark.parametrize("image_id", ["6euYVVE_u"])
+@pytest.mark.asyncio
+async def test_async_create_example_ok(async_empty_session, image_id):
+    await async_empty_session.get(
+        path=f"/images/{image_id}",
+        assert_time=True,
+        schema=schema_image_200,
+    )
+
+@pytest.mark.asyncio
+async def test_async_create_many_example(async_empty_session):
+    paths = [
+        "/api/resource/1",
+        "/api/resource/2",
+        "/api/resource/3",
+        "/api/resource/4",
+        "/api/resource/5",
+        "/api/resource/6",
+        "/api/resource/7",
+        "/api/resource/8",
+        "/api/resource/9",
+        "/api/resource/10",
+        "/api/resource/11",
+        "/api/resource/12",
+        "/api/resource/13",
+    ]
+
+    tasks = [async_empty_session.get(path=path) for path in paths]
+
+    await asyncio.gather(*tasks)
 
 
 @pytest.mark.parametrize("breeds_id, expected_status", [("invalid_id", HTTPStatus.BAD_REQUEST)])

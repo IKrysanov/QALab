@@ -1,10 +1,14 @@
 import logging
 from typing import Any, Dict
 
+import json
+
 import allure
 import jsonschema
 
 from schemas.default_schemas import DEFAULT_SCHEMAS
+
+logger = logging.getLogger(__name__)
 
 
 class ResponseValidator:
@@ -33,6 +37,12 @@ class ResponseValidator:
         try:
             logging.info(f'Validating response with schema: {schema}')
             with allure.step('Validating data'):
+                allure.attach(
+                    body=json.dumps(data),
+                    name='Validating response',
+                    attachment_type=allure.attachment_type.TEXT
+                )
+
                 jsonschema.validate(data, schema)
 
         except jsonschema.exceptions.ValidationError as e:
@@ -42,4 +52,5 @@ class ResponseValidator:
                 name="Validation Error",
                 attachment_type=allure.attachment_type.TEXT
             )
+            logging.error(error_msg)
             raise AssertionError(error_msg)

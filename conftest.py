@@ -1,13 +1,21 @@
 import pytest
-from dotenv import load_dotenv
+import asyncio
 
-from src.http_client import APIClient
+from src.clients.sync_http_client import APIClient
+from src.clients.async_http_client import AsyncAPIClient
 from dotenv import load_dotenv
 import os
 
 from requests.auth import HTTPBasicAuth
 
 load_dotenv()
+
+@pytest.fixture(scope="module")
+def event_loop():
+    """Create an instance of the default event loop for module scope."""
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
 
 
 @pytest.fixture(scope="module")
@@ -36,6 +44,12 @@ def empty_session():
     with APIClient(headers={"x-api-key": os.getenv("API_KEY")}) as api:
         yield api
 
+@pytest.fixture()
+async def async_empty_session():
+    """Fixture to create an async session for the empty."""
+
+    async with AsyncAPIClient() as api:
+        yield api
 
 @pytest.fixture(scope="module")
 def user(session_user):

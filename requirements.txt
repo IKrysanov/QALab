@@ -8,3 +8,5 @@ pytest-xdist
 pytest-dependency
 pytest-retry
 pytest-rerunfailures
+httpx
+pytest-asyncio

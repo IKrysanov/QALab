@@ -1,6 +1,13 @@
 import json
 import time
-from src.utils.validator_json.validator import ResponseValidator
+from src.utils.validation.schema_validator import ResponseValidatorJSON
+from src.utils.validation.status_validator import ResponseValidatorStatus
+from src.utils.validation.time_validator import ResponseTimeValidator
+
+from src.clients_http.config import ClientsHttpConfig
+
+from src.clients_http.exceptions import ApiError
+
 import requests
 from requests import Session, Response
 from requests.auth import HTTPBasicAuth
@@ -20,10 +27,13 @@ logger = logging.getLogger(__name__)
 
 load_dotenv()
 
+config = ClientsHttpConfig()
+
 
 def log_redirects(response: Response, *args, **kwargs) -> Response:
     if response.is_redirect:
         logger.info(f"Redirected to: {response.headers.get('Location')}")
+
         allure.attach(
             to_curl(response.request),
             name="Redirect Request",
@@ -34,24 +44,23 @@ def log_redirects(response: Response, *args, **kwargs) -> Response:
 
 
 class APIClient:
-    MAX_RESPONSE_TIME = 10
-
     def __init__(
             self,
             session: Session = None,
-            base_url: str = os.getenv("BASE_URL"),
-            schema: str = "https",
-            port: Optional[Union[int, str]] = "",
-            cert: Optional[str] = None,
-            verify: Optional[Union[int, bool]] = False,
+            base_url: str = config.BASE_URL,
+            schema: str = config.SCHEMA,
+            port: Optional[Union[int, str]] = config.PORT,
+            cert: Optional[str] = config.CERT,
+            verify: Optional[Union[int, bool]] = config.VERIFY,
             expect_status: int = HTTPStatus.OK,
             assert_status: bool = True,
             validator: bool = True,
+            assert_time: bool = False,
             log_info: bool = True,
             debug: bool = False,
             endpoint_prefix: str = "",
             headers: Optional[Dict[str, str]] = None,
-            timeout: int = 10,
+            timeout: int = config.TIMEOUT,
             **kwargs,
     ):
         self.session = session or requests.Session()
@@ -63,45 +72,43 @@ class APIClient:
         self.expect_status = expect_status
         self.assert_status = assert_status
         self.validator = validator
-        self.validate_response = ResponseValidator()
+        self.assert_time = assert_time
         self.log_info = log_info
         self.debug = debug
         self.endpoint_prefix = endpoint_prefix
         self.default_headers = headers or {}
         self.timeout = timeout
 
+    def _build_url(self, path: str) -> str:
+        base = f"{self.schema}://{self.base_url}"
+        if self.port:
+            base += f":{self.port}"
+        return urljoin(base + self.endpoint_prefix + "/", path.lstrip("/"))
+
     def _request(
             self,
             method: str,
             path: str,
-            schema: dict | None = None,
-            assert_time: bool = False,
+            json_schema: dict | None = None,
             **kwargs: Any
     ) -> Response:
-        validator = kwargs.pop("validator", self.validate_response)
-        expected_status = kwargs.pop("expected_status", self.expect_status)
-        assert_status = kwargs.pop("assert_status", self.assert_status)
-        log_info = kwargs.pop("log_info", self.log_info)
-        debug = kwargs.pop("debug", self.debug)
         headers = kwargs.pop("headers", {})
         timeout = kwargs.pop("timeout", self.timeout)
+        expected_status = kwargs.pop("expected_status", self.expect_status)
+        validator = kwargs.pop("validator", self.validator)
+        assert_status = kwargs.pop("assert_status", self.assert_status)
+        assert_time = kwargs.pop("assert_time", True)
 
         combined_headers = {**self.default_headers, **headers}
         kwargs["headers"] = combined_headers
 
-        base = f"{self.schema}://{self.base_url}"
-        if self.port:
-            base += f":{self.port}"
-
-        url = urljoin(base + self.endpoint_prefix + "/", path.lstrip("/"))
-
-        if log_info:
-            logger.info(f"Request url: {url}")
+        url = self._build_url(path)
 
         kwargs["hooks"] = {
             "response": log_redirects
         }
 
+        debug = kwargs.pop("debug", self.debug)
         if debug:
             breakpoint()
 
@@ -111,6 +118,10 @@ class APIClient:
         )
         end_time = time.time()
         response_time = end_time - start_time
+
+        status_code = response.status_code
+
+        log_info = kwargs.pop("log_info", self.log_info)
         if log_info:
             logger.info(f"Request method: {method.upper()}")
             logger.info(f"Request headers: {combined_headers}")
@@ -118,13 +129,6 @@ class APIClient:
             logger.info(f"Response status code: {response.status_code}")
             logger.info(f"Response body: {response.text[:200]}...")
             logger.info(f"Response headers: {response.headers}")
-
-        status_code = response.status_code
-
-        if response_time < self.MAX_RESPONSE_TIME:
-            logger.info(f"Response time: {response_time:.2f} seconds")
-        else:
-            logger.warning(f"Response time exceeded: {response_time:.2f} seconds")
 
         response_info = {
             "url": url,
@@ -149,53 +153,9 @@ class APIClient:
             attachment_type=allure.attachment_type.TEXT
         )
 
-        if assert_status:
-            with allure.step("Assert status code"):
-                allure.attach(
-                    str(response.status_code), name="Status Code", attachment_type=allure.attachment_type.TEXT
-                )
-                assert status_code == expected_status, f"Expected status {expected_status}, got {status_code}"
-
-        if validator:
-            content_type = response.headers.get("Content-Type", "").lower()
-            if "application/json" not in content_type:
-                raise ApiError(f"Unexpected Content-Type: {content_type}", response=response)
-
-            response_json = None
-
-            if response.content:
-                try:
-                    response_json = response.json()
-                except Exception as e:
-                    raise ApiError(f"Response content is not valid JSON: {e}", response=response)
-
-            if 200 <= status_code < 300:
-                if status_code == 204:
-                    if response.content:
-                        raise ApiError(
-                            "Expected no content for 204 response, but got content.", response=response
-                        )
-                elif schema:
-                    self.validate_response.validate_success(response_json, schema)
-
-            elif 400 <= status_code < 500:
-                if schema:
-                    self.validate_response.validate_failure(response_json, schema)
-                else:
-                    self.validate_response.validate_default(status_code, response_json)
-
-            elif 500 <= status_code < 600:
-                if schema:
-                    self.validate_response.validate_failure(response_json, schema)
-                else:
-                    self.validate_response.validate_default(status_code, response_json)
-
-        if assert_time:
-            with allure.step("Assert response time"):
-                allure.attach(
-                    f"{response_time} sec.", name="Response Time", attachment_type=allure.attachment_type.TEXT
-                )
-                assert response_time < self.MAX_RESPONSE_TIME, f"Response time exceeded: {response_time:.2f} seconds"
+        ResponseValidatorStatus.validate_status(status_code, expected_status, assert_status)
+        ResponseValidatorJSON.validate_response(status_code, response, json_schema, validator)
+        ResponseTimeValidator.validate_time_response(response_time, assert_time)
 
         return response
 
@@ -269,12 +229,3 @@ class APIClient:
         if exc_type is not None:
             logger.error(f"Exception occurred: {exc_val}")
         return False
-
-
-class ApiError(Exception):
-    """Custom exception for API errors."""
-
-    def __init__(self, message: str = "API error occurred", status_code: int = None, response: Response = None):
-        super().__init__(message)
-        self.status_code = status_code
-        self.response = response

@@ -7,7 +7,7 @@ from http import HTTPStatus
 from typing import Any, Optional, Dict, Union
 from urllib.parse import urljoin
 
-from src.utils.validator_json.validator import ResponseValidator
+from src.utils.validation.schema_validator import ResponseValidatorJSON
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class AsyncAPIClient:
         self.default_headers = headers or {}
 
         self.client = httpx.AsyncClient(verify=verify, timeout=timeout)
-        self.validate_response = ResponseValidator()
+        self.validate_response = ResponseValidatorJSON()
 
     def _build_url(self, path: str) -> str:
         base = f"{self.schema}://{self.base_url}"

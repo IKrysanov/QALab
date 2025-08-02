@@ -47,7 +47,7 @@ cover/
 
 # dotenv environment variables file
 .env
-.env.*
+env-example.txt
 
 # Allure results and reports
 allure-results/

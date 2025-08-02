@@ -2,7 +2,6 @@ import pytest
 from http import HTTPStatus
 import asyncio
 
-
 from schemas.schemas import schema_image_200
 
 
@@ -16,8 +15,9 @@ def test_sync_example_ok(empty_session, image_id):
     empty_session.get(
         path=f"/images/{image_id}",
         assert_time=True,
-        schema=schema_image_200,
+        json_schema=schema_image_200
     )
+
 
 @pytest.mark.parametrize("image_id", ["6euYVVE_u"])
 @pytest.mark.asyncio
@@ -25,8 +25,9 @@ async def test_async_create_example_ok(async_empty_session, image_id):
     await async_empty_session.get(
         path=f"/images/{image_id}",
         assert_time=True,
-        schema=schema_image_200,
+        json_schema=schema_image_200,
     )
+
 
 @pytest.mark.asyncio
 async def test_async_create_many_example(async_empty_session):
@@ -47,7 +48,7 @@ async def test_async_create_many_example(async_empty_session):
         "/images/6euYVVE_u",
     ]
 
-    tasks = [async_empty_session.get(path=path, schema=schema_image_200) for path in paths]
+    tasks = [async_empty_session.get(path=path, json_schema=schema_image_200) for path in paths]
 
     await asyncio.gather(*tasks)
 

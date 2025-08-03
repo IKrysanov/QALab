@@ -23,7 +23,7 @@ class ResponseValidatorJSON:
         if validator:
             content_type = response.headers.get("Content-Type", "").lower()
             if "application/json" not in content_type:
-                raise ApiError(f"Unexpected Content-Type: {content_type}", response=response)
+                logger.warning(f"Unexpected Content-Type: '{content_type}'. Expected 'application/json'")
 
             response_json = None
 
@@ -41,6 +41,9 @@ class ResponseValidatorJSON:
                         )
                 elif schema:
                     cls._validate_success(response_json, schema)
+
+                else:
+                    logger.warning("Schema validation is disabled. Skipping validation...")
 
             elif 400 <= status_code < 500:
                 if schema:

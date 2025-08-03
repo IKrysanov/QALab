@@ -21,13 +21,12 @@ class ResponseValidatorStatus:
 
                 raise AssertionError(error_msg)
 
-            logger.info(f"Response status {status_code} is valid.")
-
             if assert_status:
                 with allure.step("Assert status code"):
                     allure.attach(
                         str(status_code), name="Status Code", attachment_type=allure.attachment_type.TEXT
                     )
                     assert status_code == expected_status, f"Expected status {expected_status}, got {status_code}"
+                    logger.info(f"Response status {status_code} is valid.")
             else:
                 logger.info(f"Skipping status code assertion. Expected: {expected_status}, Actual: {status_code}")

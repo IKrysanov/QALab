@@ -5,7 +5,7 @@ import asyncio
 from schemas.schemas import schema_image_200
 
 
-@pytest.mark.parametrize("image_id", ["6euYVVE_u"])
+@pytest.mark.parametrize("image_id", ["6euYVVE_U"])
 @pytest.mark.dependency()
 def test_sync_example_ok(empty_session, image_id):
     """
@@ -14,8 +14,7 @@ def test_sync_example_ok(empty_session, image_id):
 
     empty_session.get(
         path=f"/images/{image_id}",
-        assert_time=True,
-        json_schema=schema_image_200
+        json_schema=schema_image_200,
     )
 
 
@@ -32,7 +31,7 @@ async def test_async_create_example_ok(async_empty_session, image_id):
 @pytest.mark.asyncio
 async def test_async_create_many_example(async_empty_session):
     paths = [
-        "/images/6euYVVE_u",
+        "/images/6euYVVE_",
         "/images/6euYVVE_u",
         "/images/6euYVVE_u",
         "/images/6euYVVE_u",

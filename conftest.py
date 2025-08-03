@@ -41,14 +41,14 @@ def session_admin():
 def empty_session():
     """Fixture to create an empty session."""
 
-    with APIClient(headers={"x-api-key": os.getenv("API_KEY")}) as api:
+    with APIClient(headers={"x-api-key": os.getenv("API_KEY")}, endpoint_prefix="/v1") as api:
         yield api
 
 @pytest.fixture()
 async def async_empty_session():
     """Fixture to create an async session for the empty."""
 
-    async with AsyncAPIClient() as api:
+    async with AsyncAPIClient(endpoint_prefix="/v1") as api:
         yield api
 
 @pytest.fixture(scope="module")

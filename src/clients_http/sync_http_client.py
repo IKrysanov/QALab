@@ -80,6 +80,8 @@ class APIClient:
         self.timeout = timeout
 
     def _build_url(self, path: str) -> str:
+        """Build a URL from the given path."""
+
         base = f"{self.schema}://{self.base_url}"
         if self.port:
             base += f":{self.port}"
@@ -92,6 +94,8 @@ class APIClient:
             json_schema: dict | None = None,
             **kwargs: Any
     ) -> Response:
+        """Make a request."""
+
         headers = kwargs.pop("headers", {})
         timeout = kwargs.pop("timeout", self.timeout)
         expected_status = kwargs.pop("expected_status", self.expect_status)
@@ -124,6 +128,7 @@ class APIClient:
         log_info = kwargs.pop("log_info", self.log_info)
         if log_info:
             logger.info(f"Request method: {method.upper()}")
+            logger.info(f"Request url: {response.request.url}")
             logger.info(f"Request headers: {combined_headers}")
             logger.info(f"Request body: {kwargs.get('data', kwargs.get('json', ''))}")
             logger.info(f"Response status code: {response.status_code}")
@@ -161,42 +166,62 @@ class APIClient:
 
     @allure.step("Setting basic authentication for session")
     def basic_auth(self, username: str, password: str):
+        """Basic authentication for session."""
+
         self.session.auth = HTTPBasicAuth(username, password)
 
     @allure.step("Setting bearer token authentication for session")
     def set_bearer_token(self, token: str):
+        """Bearer token authentication for session."""
+
         self.default_headers["Authorization"] = f"Bearer {token}"
 
     @allure.step("Performing GET request {path}")
     def get(self, path: str, **kwargs: Any) -> Response:
+        """Performs a GET request."""
+
         return self._request("GET", path, **kwargs)
 
     @allure.step("Performing POST request {path}")
     def post(self, path: str, **kwargs: Any) -> Response:
+        """Performs a POST request."""
+
         return self._request("POST", path, **kwargs)
 
     @allure.step("Performing PUT request {path}")
     def put(self, path: str, **kwargs: Any) -> Response:
+        """Performs a PUT request."""
+
         return self._request("PUT", path, **kwargs)
 
     @allure.step("Performing PATCH request {path}")
     def patch(self, path: str, **kwargs: Any) -> Response:
+        """Performs a PATCH request."""
+
         return self._request("PATCH", path, **kwargs)
 
     @allure.step("Performing DELETE request {path}")
     def delete(self, path: str, **kwargs: Any) -> Response:
+        """Performs a DELETE request."""
+
         return self._request("DELETE", path, **kwargs)
 
     @allure.step("Performing OPTIONS request {path}")
     def options(self, path: str, **kwargs: Any) -> Response:
+        """Performs a OPTIONS request."""
+
         return self._request("OPTIONS", path, **kwargs)
 
     @allure.step("Performing HEAD request {path}")
     def head(self, path: str, **kwargs: Any) -> Response:
+        """Performs a HEAD request."""
+
         return self._request("HEAD", path, **kwargs)
 
     @allure.step("Closing session")
     def close(self) -> None:
+        """Close the session."""
+
         if self.session:
             self.session.close()
             logger.info("Session closed.")
@@ -205,6 +230,8 @@ class APIClient:
 
     @allure.step("Downloading file from {path}")
     def download_file(self, path: str, save_to: str, **kwargs: Any) -> None:
+        """Download file from {path} to {save_to}."""
+
         response = self._request("GET", path, stream=True, **kwargs)
 
         if response.status_code == HTTPStatus.OK:
@@ -217,6 +244,8 @@ class APIClient:
 
     @allure.step("Uploading file to {path}")
     def upload_file(self, path: str, file_field: str, file_path: str, **kwargs: Any) -> Response:
+        """Upload file from {path} to {file_path}."""
+
         with open(file_path, 'rb') as f:
             files = {file_field: f}
             return self._request("POST", path, files=files, **kwargs)

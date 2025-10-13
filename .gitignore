@@ -85,3 +85,17 @@ ENV/
 
 report/
 reports/
+screenshots/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.tmp
+*.temp
+*.bak
+*.old

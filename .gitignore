@@ -99,3 +99,4 @@ screenshots/
 *.temp
 *.bak
 *.old
+airflow_access_template.json

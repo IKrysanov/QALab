@@ -8,6 +8,9 @@ class PostCreate(BaseModel):
 
     model_config = {"populate_by_name": True}
 
+class PostPatch(BaseModel):
+    title: str
+
 
 class Post(BaseModel):
     id: int

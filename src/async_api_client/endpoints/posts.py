@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Union, Any
 
 from httpx import Response
 
@@ -34,19 +34,22 @@ class PostsEndpoint(BaseEndpoint):
             f"{self.PATH}/{post_id}",
             expected_status=expected_status,
             response_model=model,
+            validate_response=False,
         )
 
     async def create(
             self,
-            payload: PostCreate,
+            payload: Union[PostCreate, dict],
             expected_status: StatusCode = HTTPStatus.CREATED,
+            **kwargs: Any,
     ) -> Response:
         model = Post if expected_status == HTTPStatus.CREATED else None
         return await self._http.post(
             self.PATH,
-            json=payload.model_dump(by_alias=True),
+            json=payload,
             expected_status=expected_status,
             response_model=model,
+            **kwargs,
         )
 
     async def update(
@@ -54,11 +57,13 @@ class PostsEndpoint(BaseEndpoint):
             post_id: int,
             payload: dict,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         return await self._http.put(
             f"{self.PATH}/{post_id}",
             json=payload,
             expected_status=expected_status,
+            **kwargs,
         )
 
     async def patch(
@@ -66,11 +71,13 @@ class PostsEndpoint(BaseEndpoint):
             post_id: int,
             payload: dict,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         return await self._http.patch(
             f"{self.PATH}/{post_id}",
             json=payload,
             expected_status=expected_status,
+            **kwargs,
         )
 
     async def delete(

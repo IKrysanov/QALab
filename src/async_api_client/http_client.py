@@ -12,6 +12,8 @@ from pydantic import BaseModel, ValidationError
 from http import HTTPStatus
 from src.async_api_client.redirects import RedirectTracker
 
+from utils.curl import to_curl
+
 from .config import APIConfig
 from .auth import AsyncAuthStrategy, NoAuth
 from .exceptions import APIError, APITimeoutError
@@ -23,8 +25,6 @@ from src.async_api_client.models.models import (
     NotFoundError,
     ServerError,
 )
-
-from curlify import to_curl
 
 StatusCode = Union[int, Iterable[int], None]
 ResponseModel = Optional[Type[BaseModel]]
@@ -68,23 +68,18 @@ class AsyncHTTPClient(ABC):
     @abstractmethod
     async def aclose(self) -> None: ...
 
-    @allure.step("async-request GET {path}")
     async def get(self, path, expected_status=HTTPStatus.OK, response_model=None, **kwargs):
         return await self.request("GET", path, expected_status, response_model, **kwargs)
 
-    @allure.step("async-request POST {path}")
     async def post(self, path, expected_status=HTTPStatus.CREATED, response_model=None, **kwargs):
         return await self.request("POST", path, expected_status, response_model, **kwargs)
 
-    @allure.step("async-request PUT {path}")
     async def put(self, path, expected_status=HTTPStatus.OK, response_model=None, **kwargs):
         return await self.request("PUT", path, expected_status, response_model, **kwargs)
 
-    @allure.step("async-request PATCH {path}")
     async def patch(self, path, expected_status=HTTPStatus.OK, response_model=None, **kwargs):
         return await self.request("PATCH", path, expected_status, response_model, **kwargs)
 
-    @allure.step("async-request DELETE {path}")
     async def delete(self, path, expected_status=HTTPStatus.NO_CONTENT, response_model=None, **kwargs):
         return await self.request("DELETE", path, expected_status, response_model, **kwargs)
 
@@ -200,22 +195,15 @@ class HttpxAsyncClient(AsyncHTTPClient):
 
         return default if per_request is None else per_request
 
-    def _prepare_payload(
-            self,
-            kwargs: dict,
-            request_model: RequestModel,
-            validate: bool,
-    ) -> dict:
+    @allure.step("Prepare request payload with optional validation")
+    def _prepare_payload(self, kwargs, request_model, validate):
         """
-        Приводит payload в kwargs['json'] к dict для отправки.
+        Подготавливает и опционально валидирует JSON-payload в `kwargs` перед отправкой HTTP-запроса.
 
-        Поведение:
-          - payload — BaseModel: используется model.model_dump(by_alias=True)
-              (объект уже валиден — pydantic проверил при создании).
-          - payload — dict + request_model + validate=True:
-              валидируем dict через модель, при ошибке кидаем AssertionError.
-          - payload — dict + validate=False:
-              отправляем как есть, не трогая.
+        Аргументы:
+            - kwargs (dict): словарь kwargs, передаваемый в httpx (ожидается ключ `json` для тела).
+            - request_model (Optional[Type[BaseModel]]): Pydantic-класс для валидации dict-пейлоада.
+            - validate (bool): флаг, включающий валидацию dict-пейлоада по `request_model`.
         """
 
         payload = kwargs.get("json")
@@ -226,7 +214,14 @@ class HttpxAsyncClient(AsyncHTTPClient):
             kwargs["json"] = payload.model_dump(by_alias=True, exclude_none=True)
             return kwargs
 
-        if validate and request_model is not None:
+        if validate:
+            if request_model is None:
+                raise ValueError(
+                    "Cannot validate dict payload without request_model. "
+                    "Either pass a Pydantic model instance, "
+                    "set request_model in the endpoint, "
+                    "or call with validate_request=False."
+                )
             try:
                 model_instance = request_model.model_validate(payload)
             except ValidationError as exc:
@@ -252,20 +247,25 @@ class HttpxAsyncClient(AsyncHTTPClient):
             f"URL: {response.request.url}\nBody: {response.text}"
         )
 
+    @allure.step("Validate response body against model")
     def _validate_body(self, response: Response, response_model: ResponseModel) -> None:
         model = response_model or self._error_models.get(response.status_code)
+
         if model is None:
-            return
+            raise ValueError(
+                f"validate_response=True, but no response_model provided "
+                f"and no error_model registered for status {response.status_code}. "
+                f"Pass response_model to the endpoint or use validate_response=False."
+            )
 
         if not response.content:
-            return
+            return  # 204 No Content и подобные — валидировать нечего
 
         try:
             body = response.json()
         except ValueError:
             raise AssertionError(
-                f"Expected JSON body matching {model.__name__}, "
-                f"got non-JSON response: {response.text[:200]}"
+                f"Expected JSON matching {model.__name__}, got non-JSON: {response.text[:200]}"
             )
 
         try:

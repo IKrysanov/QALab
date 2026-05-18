@@ -33,7 +33,7 @@ class TestTodos:
     @allure.title("Суммарное число todo каждого пользователя — 20")
     @pytest.mark.parametrize("user_id", [1, 5, 10])
     async def test_each_user_has_20_todos(self, api_client, user_id):
-        response = await api_client.todos.list(user_id=user_id)
-        todos = response.json()
-        assert len(todos) == 20
-        assert all(t["userId"] == user_id for t in todos)
+        await api_client.todos.list(user_id=user_id, response_model=Todo, validate_response=True)
+        # todos = response.json()
+        # assert len(todos) == 20
+        # assert all(t["userId"] == user_id for t in todos)

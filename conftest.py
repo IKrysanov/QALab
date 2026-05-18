@@ -1,3 +1,4 @@
+import allure
 import httpx
 import pytest
 import pytest_asyncio
@@ -42,19 +43,23 @@ def api_config(request) -> APIConfig:
 
 
 @pytest_asyncio.fixture(loop_scope="session", scope="session")
+@allure.title("Create HTTP session for API client")
 async def http_session(api_config):
     async with httpx.AsyncClient(
             base_url=api_config.base_url,
             timeout=api_config.timeout,
             verify=api_config.verify_ssl,
             follow_redirects=api_config.follow_redirects,
+            headers=api_config.default_headers,
     ) as session:
         yield session
 
 
 @pytest_asyncio.fixture
 async def api_client(api_config, http_session):
-    async with AsyncAPIClient(api_config, session=http_session) as client:
+    async with AsyncAPIClient(
+            api_config, session=http_session, validate_request=True, validate_response=True,
+    ) as client:
         yield client
 
 

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Any
 from httpx import Response
 
 from .base import BaseEndpoint
@@ -17,6 +17,7 @@ class TodosEndpoint(BaseEndpoint):
         user_id: Optional[int] = None,
         completed: Optional[bool] = None,
         expected_status: StatusCode = HTTPStatus.OK,
+        **kwargs: Any
     ) -> Response:
         params: dict = {}
         if user_id is not None:
@@ -27,6 +28,7 @@ class TodosEndpoint(BaseEndpoint):
             self.PATH,
             params=params or None,
             expected_status=expected_status,
+            **kwargs,
         )
 
     async def get(self, todo_id: int, expected_status: StatusCode = HTTPStatus.OK) -> Response:

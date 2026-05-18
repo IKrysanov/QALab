@@ -1,7 +1,7 @@
 import allure
 import pytest
 
-from src.async_api_client.models.posts import Post, PostCreate, Comment
+from src.async_api_client.models.posts import Post, PostCreate, PostPatch, Comment
 from src.async_api_client.asserts import (
     assert_status_code,
     assert_no_redirects,
@@ -54,40 +54,43 @@ class TestPosts:
     async def test_get_nonexistent_post_returns_404(self, api_client):
         response = await api_client.posts.get(9999, expected_status=404)
         assert_status_code(response, 404)
-        # JSONPlaceholder возвращает пустой {} на 404 — error_models
-        # для этого случая в клиенте лучше отключить или ослабить.
         assert response.json() == {}
 
     @allure.story("Create")
     @allure.severity(allure.severity_level.CRITICAL)
     @allure.title("POST /posts создаёт пост и возвращает 201 с id=101")
     async def test_create_post_returns_201(self, api_client):
-        payload = PostCreate(
+        payload =  PostCreate(
             title="Test title",
             body="Test body content",
-            user_id=1,
+            userId=1,
         )
 
-        response = await api_client.posts.create(payload)
+        # {"title": "Test title", "body": "Test body content", "userId": 1}
+
+        response = await api_client.posts.create(payload, validate_request=True)
 
         # На фейковом API всегда id=101 для нового объекта
-        created = Post.model_validate(response.json())
-        assert created.id == 101
-        assert created.title == "Test title"
-        assert created.user_id == 1
+        created = response.json()
+        assert created.get("id") == 101
+        assert created.get("title") == "Test title"
+        assert created.get("userId") == 1
 
     @allure.story("Create")
     @allure.title("POST с невалидным userId — pydantic ловит на клиенте")
     async def test_create_invalid_user_id_rejected_by_pydantic(self):
-        with pytest.raises(ValueError):
-            PostCreate(title="x", body="y", user_id=0)  # ge=1
+        with allure.step("Пытаемся создать пост с user_id=0, который не соответствует условию ge=1"):
+            with pytest.raises(ValueError):
+                PostCreate(title="x", body="y", userId=0)  # ge=1
 
     @allure.story("Update")
     @allure.title("PUT /posts/1 заменяет ресурс")
     async def test_update_post(self, api_client):
         response = await api_client.posts.update(
+            # request_model=PostCreate,
             post_id=1,
             payload={"id": 1, "userId": 1, "title": "updated", "body": "updated body"},
+            validate_request=False,
         )
 
         body = response.json()
@@ -97,7 +100,12 @@ class TestPosts:
     @allure.story("Update")
     @allure.title("PATCH /posts/1 обновляет только переданные поля")
     async def test_patch_post_partial(self, api_client):
-        response = await api_client.posts.patch(1, {"title": "patched only"})
+        response = await api_client.posts.patch(
+            1,
+            {"title": "patched only"},
+            request_model=PostPatch,
+            validate_request=True
+        )
 
         body = response.json()
         assert body["title"] == "patched only"

@@ -1,63 +1,83 @@
+import allure
+import httpx
 import pytest
-import asyncio
+import pytest_asyncio
 
-from src.clients_http.sync_http_client import APIClient
-from src.clients_http.async_http_client import AsyncAPIClient
-from dotenv import load_dotenv
-import os
+from src.async_api_client.config import APIConfig
+from src.async_api_client.auth import SessionLoginAuth
+from src.async_api_client.client import AsyncAPIClient
 
-from requests.auth import HTTPBasicAuth
+from utils.logger import configure_logging
+from utils.environment import ConfigEnv
 
-load_dotenv()
-
-@pytest.fixture(scope="module")
-def event_loop():
-    """Create an instance of the default event loop for module scope."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+config_env = ConfigEnv()
 
 
-@pytest.fixture(scope="module")
-def session_user():
-    """Fixture to create a session for the user."""
-
-    with APIClient() as api:
-        yield api
-
-
-@pytest.fixture(scope="module")
-def session_admin():
-    """Fixture to create a session for the admin."""
-
-    with APIClient() as api:
-        api.session.auth = HTTPBasicAuth(
-            os.getenv("USERNAME_ADMIN"), os.getenv("PASSWORD_ADMIN")
-        )
-        yield api
+def pytest_addoption(parser):
+    parser.addoption(
+        "--base_url",
+        action="store",
+        default=None,
+        help="Base API URL (overrides API_BASE_URL from environment)",
+    )
 
 
-@pytest.fixture(scope="module")
-def empty_session():
-    """Fixture to create an empty session."""
+def pytest_configure(config):
+    base_url = config.getoption("base_url") or config_env.get("API_BASE_URL", required=True)
+    config.base_url = base_url
 
-    with APIClient(headers={"x-api-key": os.getenv("API_KEY")}, endpoint_prefix="/v1") as api:
-        yield api
+    level = config.getoption("log_level") or "INFO"
+    configure_logging(level=level)
 
-@pytest.fixture()
-async def async_empty_session():
-    """Fixture to create an async session for the empty."""
 
-    async with AsyncAPIClient(endpoint_prefix="/v1") as api:
-        yield api
+@pytest.fixture(scope="session")
+def api_config(request) -> APIConfig:
+    base_url = request.config.base_url
 
-@pytest.fixture(scope="module")
-def user(session_user):
-    """Fixture to authenticate a user session."""
+    return APIConfig(
+        host=base_url,
+        protocol="https",
+        timeout=10.0,
+        default_headers={"Accept": "application/json", "X-Test-Client": "AsyncAPIClient"},
+    )
 
-    session_user.post("/auth/login", json={
-        "username": os.getenv("USERNAME_USER"),
-        "password": os.getenv("PASSWORD_USER"),
-    })
 
-    return session_user
+@pytest_asyncio.fixture(loop_scope="session", scope="session")
+@allure.title("Create HTTP session for API client")
+async def http_session(api_config):
+    async with httpx.AsyncClient(
+            base_url=api_config.base_url,
+            timeout=api_config.timeout,
+            verify=api_config.verify_ssl,
+            follow_redirects=api_config.follow_redirects,
+            headers=api_config.default_headers,
+    ) as session:
+        yield session
+
+
+@pytest_asyncio.fixture
+async def api_client(api_config, http_session):
+    async with AsyncAPIClient(
+            api_config, session=http_session, validate_request=False, validate_response=False,
+    ) as client:
+        yield client
+
+
+@pytest_asyncio.fixture(loop_scope="session", scope="session")
+async def session_auth(http_session) -> SessionLoginAuth:
+    return SessionLoginAuth(
+        username="admin",
+        password="admin",
+        login_url="/login/",
+        session=http_session,
+    )
+
+
+@pytest_asyncio.fixture
+async def api_client_with_auth_session(api_config, http_session, session_auth):
+    async with AsyncAPIClient(
+            api_config,
+            auth=session_auth,
+            session=http_session,
+    ) as client:
+        yield client

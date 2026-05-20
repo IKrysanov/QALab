@@ -15,7 +15,6 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 import asyncio
-import httpx
 from httpx import AsyncClient
 
 
@@ -78,16 +77,6 @@ class SessionLoginAuth(AsyncAuthStrategy):
     """
     Стратегия аутентификации через POST-запрос на endpoint логина и использование cookie.
 
-    Пояснение поведения:
-    - Выполняет POST на `login_url` с полями логина; при успехе берёт cookie из ответа и
-      сохраняет их в виде строкового заголовка `Cookie`.
-    - Кэширует значение cookie в `self._cookie_header` и использует его для
-      последующих запросов до тех пор, пока не будет вызван `invalidate`.
-    - Использует асинхронный `asyncio.Lock` чтобы предотвратить параллельные попытки логина.
-    - Можно передать внешний `httpx.AsyncClient` через `session` — тогда он будет
-      использован для логина (не будет закрыт этой стратегией). Если `session` отсутствует,
-      стратегия создаёт временный `AsyncClient` для одного запроса.
-
     Args:
         username: имя пользователя для логина.
         password: пароль.
@@ -102,11 +91,11 @@ class SessionLoginAuth(AsyncAuthStrategy):
             self,
             username: str,
             password: str,
+            session: AsyncClient,
             login_url: str = "/login",
             login_field: str = "username",
             password_field: str = "password",
             as_json: bool = False,
-            session: Optional[AsyncClient] = None,
     ):
         self._username = username
         self._password = password
@@ -115,57 +104,39 @@ class SessionLoginAuth(AsyncAuthStrategy):
         self._password_field = password_field
         self._as_json = as_json
         self._session = session
-        self._cookie_header: Optional[str] = None
+        self._logged_in = False
         self._lock = asyncio.Lock()
 
+    async def apply(self, headers: dict) -> dict:
+        if not self._logged_in:
+            async with self._lock:
+                if not self._logged_in:
+                    await self._login()
+                    self._logged_in = True
+
+        return headers
+
     async def _login(self) -> None:
-        """
-        Выполняет POST на `self._login_url` и сохраняет cookie в `self._cookie_header`.
-
-        Бросает:
-            AssertionError если HTTP-статус вне диапазона [200, 399].
-            RuntimeError если ответ успешен, но cookie отсутствуют.
-        """
-
         payload = {
             self._login_field: self._username,
             self._password_field: self._password,
         }
-
-        async def do_login(client: AsyncClient) -> httpx.Response:
-            if self._as_json:
-                return await client.post(self._login_url, json=payload)
-            return await client.post(self._login_url, data=payload)
-
-        if self._session is not None:
-            response = await do_login(self._session)
+        if self._as_json:
+            response = await self._session.post(self._login_url, json=payload)
         else:
-            async with httpx.AsyncClient() as tmp:
-                response = await do_login(tmp)
+            response = await self._session.post(self._login_url, data=payload)
 
         assert 200 <= response.status_code < 400, (
-            f"Login failed: status {response.status_code}, body: {response.text}"
+            f"Login failed: {response.status_code}, body: {response.text}"
         )
 
-        cookies = response.cookies
-        if not cookies:
+        if not self._session.cookies:
             raise RuntimeError("Login succeeded but no cookies were set by server")
 
-        self._cookie_header = "; ".join(f"{k}={v}" for k, v in cookies.items())
-
-    async def apply(self, headers: dict) -> dict:
-        if self._cookie_header is None:
-            async with self._lock:
-                if self._cookie_header is None:
-                    await self._login()
-
-        return {**headers, "Cookie": self._cookie_header}
-
     async def invalidate(self) -> None:
-        """Сбросить кэш cookie — следующий запрос вызовет повторный логин."""
-
         async with self._lock:
-            self._cookie_header = None
+            self._logged_in = False
+            self._session.cookies.clear()
 
 
 class RefreshableTokenAuth(AsyncAuthStrategy):

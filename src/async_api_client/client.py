@@ -9,8 +9,6 @@ from .config import APIConfig
 from .auth import AsyncAuthStrategy
 from .http_client import AsyncHTTPClient, HttpxAsyncClient
 
-from .endpoints.users import UsersEndpoint
-from .endpoints.todos import TodosEndpoint
 from .endpoints.posts import PostsEndpoint
 
 
@@ -35,15 +33,11 @@ class AsyncAPIClient:
     """
 
     ENDPOINTS = {
-        "users": UsersEndpoint,
         "posts": PostsEndpoint,
-        "todos": TodosEndpoint,
     }
 
     # Аннотации для IDE и автодополнения. Реальные атрибуты создаются динамически в _register_endpoints.
-    users: UsersEndpoint
     posts: PostsEndpoint
-    todos: TodosEndpoint
 
     def __init__(
             self,

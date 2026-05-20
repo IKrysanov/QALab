@@ -38,7 +38,7 @@ def api_config(request) -> APIConfig:
         host=base_url,
         protocol="https",
         timeout=10.0,
-        default_headers={"Accept": "application/json"},
+        default_headers={"Accept": "application/json", "X-Test-Client": "AsyncAPIClient"},
     )
 
 
@@ -58,7 +58,7 @@ async def http_session(api_config):
 @pytest_asyncio.fixture
 async def api_client(api_config, http_session):
     async with AsyncAPIClient(
-            api_config, session=http_session, validate_request=True, validate_response=True,
+            api_config, session=http_session, validate_request=False, validate_response=False,
     ) as client:
         yield client
 

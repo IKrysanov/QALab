@@ -17,7 +17,7 @@ from utils.curl import to_curl
 from .config import APIConfig
 from .auth import AsyncAuthStrategy, NoAuth
 from .exceptions import APIError, APITimeoutError
-from src.async_api_client.models.models import (
+from src.async_api_client.models.base import (
     ErrorResponse,
     ValidationErrorResponse,
     UnauthorizedError,
@@ -156,18 +156,23 @@ class HttpxAsyncClient(AsyncHTTPClient):
             validate=do_validate_req,
         )
 
-        headers = await self._auth.apply(kwargs.pop("headers", {}) or {})
         request_id = uuid.uuid4().hex[:8]
+        headers = await self._auth.apply(kwargs.pop("headers", {}) or {})
 
         if follow_redirects is not None:
             kwargs["follow_redirects"] = follow_redirects
 
         with allure.step(f"{method.upper()} {path}"):
-            self._log_request(request_id, method, path, headers, kwargs)
-
             start = time.monotonic()
             try:
                 response = await self.session.request(method, path, headers=headers, **kwargs)
+                self._log_request(
+                    request_id,
+                    response.request.method,
+                    response.request.url,
+                    response.request.headers,
+                    kwargs
+                )
             except httpx.TimeoutException as exc:
                 self._log_failure(request_id, method, path, start, exc)
                 raise APITimeoutError(f"Request timeout: {exc}") from exc
@@ -278,18 +283,46 @@ class HttpxAsyncClient(AsyncHTTPClient):
 
     # --- Логирование --------------------------------------------------------
 
-    def _log_request(self, request_id: str, method: str, path: str, headers: dict, kwargs: dict) -> None:
-        body = kwargs.get("json") or kwargs.get("data") or kwargs.get("params")
+    def _log_request(
+            self,
+            request_id: str,
+            method: str,
+            path: str,
+            headers: dict,
+            kwargs: dict,
+    ) -> None:
+        params = kwargs.get("params")
+        body = kwargs.get("json") if kwargs.get("json") is not None else kwargs.get("data")
+        files = kwargs.get("files")
+
         self.logger.info(
-            "→ [%s] %s %s | headers=%s | body=%s",
-            request_id, method.upper(), path, _mask_headers(headers), body,
+            "→ [%s] %s %s | headers=%s | params=%s | body=%s%s",
+            request_id,
+            method.upper(),
+            path,
+            _mask_headers(headers),
+            params,
+            body,
+            f" | files={list(files.keys())}" if files else "",
         )
-        safe_payload = (
-            f"{method.upper()} {path}\n"
-            f"Headers: {_mask_headers(headers)}\n"
-            f"Body: {body}"
+
+        safe_headers = _mask_headers(headers)
+        parts = [
+            f"{method.upper()} {path}",
+            f"Headers: {safe_headers}",
+        ]
+        if params is not None:
+            parts.append(f"Query params: {params}")
+        if body is not None:
+            parts.append(f"Body: {body}")
+        if files:
+            parts.append(f"Files: {list(files.keys())}")
+
+        allure.attach(
+            "\n".join(parts),
+            name=f"Request {method.upper()} {path}",
+            attachment_type=allure.attachment_type.TEXT,
         )
-        allure.attach(safe_payload, name="Request", attachment_type=allure.attachment_type.TEXT)
 
     def _log_response(self, request_id: str, response: Response, start: float) -> None:
         elapsed_ms = (time.monotonic() - start) * 1000

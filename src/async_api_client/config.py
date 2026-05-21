@@ -21,6 +21,8 @@ class BaseHTTPConfig:
     default_headers: dict[str, str] = field(default_factory=dict)
     max_connections: int = 100
     max_keepalive_connections: int = 20
+    request_trace_id_header: str = "X-TRACE-ID"
+    max_log_body: int = 4096
 
     def __post_init__(self):
         if self.host.startswith(("http://", "https://")):

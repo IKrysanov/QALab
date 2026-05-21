@@ -12,7 +12,6 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 import asyncio
 from httpx import AsyncClient
@@ -116,6 +115,11 @@ class SessionLoginAuth(AsyncAuthStrategy):
 
         return headers
 
+    async def invalidate(self) -> None:
+        async with self._lock:
+            self._logged_in = False
+            self._session.cookies.clear()
+
     async def _login(self) -> None:
         payload = {
             self._login_field: self._username,
@@ -132,11 +136,6 @@ class SessionLoginAuth(AsyncAuthStrategy):
 
         if not self._session.cookies:
             raise RuntimeError("Login succeeded but no cookies were set by server")
-
-    async def invalidate(self) -> None:
-        async with self._lock:
-            self._logged_in = False
-            self._session.cookies.clear()
 
 
 class RefreshableTokenAuth(AsyncAuthStrategy):

@@ -2,7 +2,7 @@ import logging
 import time
 import uuid
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Type, Union, Iterable
+from typing import Any, Optional, Type
 
 import allure
 import httpx
@@ -17,39 +17,15 @@ from utils.curl import to_curl
 from .config import APIConfig
 from .auth import AsyncAuthStrategy, NoAuth
 from .exceptions import APIError, APITimeoutError
-from src.async_api_client.models.base import (
-    ErrorResponse,
-    ValidationErrorResponse,
-    UnauthorizedError,
-    ForbiddenError,
-    NotFoundError,
-    ServerError,
-)
 
-StatusCode = Union[int, Iterable[int], None]
-ResponseModel = Optional[Type[BaseModel]]
-RequestModel = Optional[Type[BaseModel]]
-RequestPayload = Union[BaseModel, dict, None]
-
-SENSITIVE_HEADERS = {"authorization", "x-api-key", "cookie", "set-cookie", "x-auth-token"}
-
-DEFAULT_ERROR_MODELS: dict[int, Type[BaseModel]] = {
-    HTTPStatus.BAD_REQUEST: ErrorResponse,
-    HTTPStatus.UNAUTHORIZED: UnauthorizedError,
-    HTTPStatus.FORBIDDEN: ForbiddenError,
-    HTTPStatus.NOT_FOUND: NotFoundError,
-    HTTPStatus.CONFLICT: ErrorResponse,
-    HTTPStatus.UNPROCESSABLE_CONTENT: ValidationErrorResponse,
-    HTTPStatus.INTERNAL_SERVER_ERROR: ServerError,
-    HTTPStatus.BAD_GATEWAY: ServerError,
-    HTTPStatus.SERVICE_UNAVAILABLE: ServerError,
-    HTTPStatus.GATEWAY_TIMEOUT: ServerError,
-}
+from .types import StatusCode, ResponseModel, RequestModel, RequestPayload
+from .constants import DEFAULT_ERROR_MODELS, SENSITIVE_HEADERS
 
 
-def _mask_headers(headers: dict) -> dict:
+def _mask_headers(headers: dict, mask_sensitive_values: bool = True) -> dict:
+    sensitive: frozenset[str] = SENSITIVE_HEADERS if mask_sensitive_values else frozenset()
     return {
-        k: ("***" if k.lower() in SENSITIVE_HEADERS else v)
+        k: ("***" if k.lower() in sensitive else v)
         for k, v in (headers or {}).items()
     }
 
@@ -343,7 +319,11 @@ class HttpxAsyncClient(AsyncHTTPClient):
             f"Headers: {dict(response.headers)}\n\n{body_str}"
         )
         allure.attach(payload, name="Response", attachment_type=atype)
-        allure.attach(to_curl(response.request), name="cURL", attachment_type=allure.attachment_type.TEXT)
+        allure.attach(
+            to_curl(response.request, sensitive_headers=SENSITIVE_HEADERS),
+            name="cURL",
+            attachment_type=allure.attachment_type.TEXT,
+        )
 
     def _log_failure(self, request_id: str, method: str, path: str, start: float, exc: Exception) -> None:
         elapsed_ms = (time.monotonic() - start) * 1000

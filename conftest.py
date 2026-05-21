@@ -3,7 +3,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from src.async_api_client.config import APIConfig
+from src.async_api_client.config import APIConfig, WebUIConfig
 from src.async_api_client.auth import SessionLoginAuth
 from src.async_api_client.client import AsyncAPIClient
 
@@ -34,12 +34,14 @@ def pytest_configure(config):
 def api_config(request) -> APIConfig:
     base_url = request.config.base_url
 
-    return APIConfig(
-        host=base_url,
-        protocol="https",
-        timeout=10.0,
-        default_headers={"Accept": "application/json", "X-Test-Client": "AsyncAPIClient"},
-    )
+    return APIConfig(host=base_url)
+
+
+@pytest.fixture(scope="session")
+def web_ui_config(request) -> WebUIConfig:
+    base_url = request.config.base_url
+
+    return WebUIConfig(host=base_url)
 
 
 @pytest_asyncio.fixture(loop_scope="session", scope="session")

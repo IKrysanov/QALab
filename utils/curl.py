@@ -1,38 +1,44 @@
 import shlex
-from typing import Iterable
+from typing import Iterable, Optional
 
 from httpx import Request
 
-
-SENSITIVE_HEADERS = ("authorization", "x-api-key", "cookie", "x-auth-token", "set-cookie", "proxy-authorization")
+DEFAULT_SENSITIVE_HEADERS = frozenset({
+    "authorization",
+    "cookie",
+    "set-cookie",
+})
 
 
 def to_curl(
-    request: Request,
-    mask_sensitive: bool = True,
-    sensitive_headers: Iterable[str] = SENSITIVE_HEADERS,
+        request: Request,
+        sensitive_headers: Optional[Iterable[str]] = None,
+        mask_value: str = "***",
 ) -> str:
     """
-    Сконвертировать httpx.Request в curl-команду.
+    Сконвертировать httpx.Request в curl-команду с маскировкой чувствительных заголовков.
 
     :param request: объект httpx.Request (response.request тоже подходит)
-    :param mask_sensitive: маскировать значения чувствительных заголовков
-    :param sensitive_headers: имена заголовков для маскирования (lower-case)
+    :param sensitive_headers: имена заголовков для маскирования (case-insensitive).
+                              None → использовать DEFAULT_SENSITIVE_HEADERS.
+                              Пустой набор → не маскировать ничего.
+    :param mask_value: чем заменять значение чувствительного заголовка
     """
+    sensitive = (
+        DEFAULT_SENSITIVE_HEADERS
+        if sensitive_headers is None
+        else frozenset(h.lower() for h in sensitive_headers)
+    )
 
     parts: list[str] = ["curl"]
 
-    # Метод
     if request.method.upper() != "GET":
         parts.append(f"-X {request.method.upper()}")
 
-    # Заголовки
-    sensitive = {h.lower() for h in sensitive_headers}
     for name, value in request.headers.items():
-        display_value = "***" if mask_sensitive and name.lower() in sensitive else value
-        parts.append(f"-H {shlex.quote(f'{name}: {display_value}')}")
+        display = mask_value if name.lower() in sensitive else value
+        parts.append(f"-H {shlex.quote(f'{name}: {display}')}")
 
-    # Тело — у httpx это байты в .content
     if request.content:
         try:
             body = request.content.decode("utf-8")
@@ -40,7 +46,6 @@ def to_curl(
             body = f"<binary {len(request.content)} bytes>"
         parts.append(f"--data {shlex.quote(body)}")
 
-    # URL — в самом конце, как принято
     parts.append(shlex.quote(str(request.url)))
 
     return " ".join(parts)

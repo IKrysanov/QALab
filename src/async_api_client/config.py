@@ -1,69 +1,82 @@
-"""
-Конфигурация API-клиента.
-
-Содержит неизменяемый dataclass `APIConfig`, который хранит параметры
-подключения к API (хост, протокол, путь-префикс, порт, таймаут и др.)
-и предоставляет вычисляемое свойство `base_url` для удобного получения
-полного базового URL, используемого http-клиентом.
-"""
+"""Конфигурации HTTP-клиентов."""
 
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
 
 @dataclass(frozen=True)
-class APIConfig:
+class BaseHTTPConfig:
     """
-    Настройки подключения к API.
-
-    Параметры:
-    - host: доменное имя или хост с портом (без схемы), например "api.example.com".
-    - protocol: схема: "http" или "https" (по умолчанию "https").
-    - prefix_path: префикс пути, добавляемый к базовому URL, например "/api/v1" или "api/v1".
-                   Если пустая строка — префикс не добавляется.
-    - port: опциональный номер порта. Если указан, включается в `base_url` как `host:port`.
-    - timeout: таймаут в секундах для запросов.
-    - verify_ssl: проверять ли SSL-сертификат при HTTPS.
-    - follow_redirects: следовать ли редиректам (по умолчанию True).
-    - default_headers: словарь заголовков по умолчанию.
-    - max_connections, max_keepalive_connections: настройки пула соединений.
+    Общая база для любых HTTP-клиентов поверх httpx.
+    Прямо использовать обычно не нужно — лучше APIConfig или WebUIConfig.
     """
 
     host: str
     protocol: Literal["http", "https"] = "https"
-    prefix_path: str = ""
     port: Optional[int] = None
+    prefix_path: str = ""
     timeout: float = 10.0
     verify_ssl: bool = True
     follow_redirects: bool = True
-    default_headers: dict = field(default_factory=dict)
+    default_headers: dict[str, str] = field(default_factory=dict)
     max_connections: int = 100
     max_keepalive_connections: int = 20
 
+    def __post_init__(self):
+        if self.host.startswith(("http://", "https://")):
+            raise ValueError(
+                f"host should not include protocol, got {self.host!r}. "
+                f"Use protocol parameter instead."
+            )
+
+        if "//" in self.prefix_path.strip("/"):
+            raise ValueError(f"prefix_path contains double slashes: {self.prefix_path!r}")
+
+    @property
+    def root_url(self) -> str:
+        netloc = f"{self.host}:{self.port}" if self.port else self.host
+        return f"{self.protocol}://{netloc}"
+
     @property
     def base_url(self) -> str:
-        """
-        Собирает и возвращает базовый URL в формате "{protocol}://{host[:port]}{/prefix}".
-
-        Правила формирования:
-        - Если указан `port`, он добавляется к `host` через двоеточие: "host:port".
-        - `prefix_path` нормализуется: обрезаются внешние слеши, затем,
-          если префикс непустой, добавляется один ведущий слеш.
-            Примеры:
-              prefix_path = ""       -> '' (нет суффикса)
-              prefix_path = "api/v1" -> '/api/v1'
-              prefix_path = "/api"   -> '/api'
-        - В результирующем `base_url` не должно быть конечного слеша,
-          кроме случаев, когда `prefix_path` явно задаёт такой фрагмент.
-        - Возвращаемое значение пригодно для использования как `httpx.AsyncClient(base_url=...)`.
-
-        Примеры:
-          APIConfig(host="api.example.com") -> "https://api.example.com"
-          APIConfig(host="api.example.com", port=8080) -> "https://api.example.com:8080"
-          APIConfig(host="api.example.com", prefix_path="/api/v1") -> "https://api.example.com/api/v1"
-        """
-
-        netloc = f"{self.host}:{self.port}" if self.port else self.host
         prefix = self.prefix_path.strip("/")
         suffix = f"/{prefix}" if prefix else ""
-        return f"{self.protocol}://{netloc}{suffix}"
+        return f"{self.root_url}{suffix}"
+
+
+@dataclass(frozen=True)
+class APIConfig(BaseHTTPConfig):
+    """Конфиг для REST API. По умолчанию Accept: application/json."""
+
+    default_headers: dict = field(
+        default_factory=lambda: {"Accept": "application/json"}
+    )
+
+
+@dataclass(frozen=True)
+class WebUIConfig(BaseHTTPConfig):
+    """
+    Конфиг для тестов веб-приложения через httpx.
+
+    Отличается от APIConfig:
+      - timeout 30 сек вместо 10 (страницы тяжелее JSON);
+      - дефолтные заголовки имитируют браузер;
+      - prefix_path пуст (UI обычно на корне).
+    """
+
+    timeout: float = 30.0
+    user_agent: str = "Mozilla/5.0 (compatible; QALab/1.0; +tests)"
+    default_headers: dict[str, str] = field(
+        default_factory=lambda: {
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+    )
+
+    @property
+    def all_headers(self) -> dict[str, str]:
+        """Итоговые заголовки — default_headers + User-Agent."""
+        return {**self.default_headers, "User-Agent": self.user_agent}

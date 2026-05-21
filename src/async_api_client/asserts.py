@@ -4,7 +4,7 @@ import allure
 from httpx import Response
 from .http_client import StatusCode
 
-from src.async_api_client.redirects import RedirectChain
+from .redirects import RedirectChain
 
 
 def assert_status_code(response: Response, expected: StatusCode) -> None:

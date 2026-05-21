@@ -29,6 +29,14 @@ SENSITIVE_HEADERS = frozenset({
     "proxy-authorization",
 })
 
+SENSITIVE_BODY_KEYS: frozenset[str] = frozenset({
+    "password", "passwd", "pwd",
+    "token", "access_token", "refresh_token", "id_token",
+    "secret", "client_secret",
+    "api_key", "apikey", "x-api-key",
+    "authorization",
+})
+
 DEFAULT_ERROR_MODELS: dict[int, Type[BaseModel]] = {
     HTTPStatus.BAD_REQUEST: ErrorResponse,
     HTTPStatus.UNAUTHORIZED: UnauthorizedError,
@@ -41,3 +49,6 @@ DEFAULT_ERROR_MODELS: dict[int, Type[BaseModel]] = {
     HTTPStatus.SERVICE_UNAVAILABLE: ServerError,
     HTTPStatus.GATEWAY_TIMEOUT: ServerError,
 }
+
+IDEMPOTENT_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "PUT", "DELETE", "OPTIONS"})
+RETRYABLE_STATUSES: frozenset[int] = frozenset({408, 429, 500, 502, 503, 504})

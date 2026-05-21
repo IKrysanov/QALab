@@ -15,7 +15,7 @@ from .redirects import (
     RedirectHop,
 )
 
-from .exceptions import APIError, APITimeoutError
+from .exceptions import APIError, APITimeoutError, StatusAssertionError
 
 from .models.base import (
     ErrorResponse,
@@ -50,6 +50,7 @@ __all__ = [
     # Исключения
     "APIError",
     "APITimeoutError",
+    "StatusAssertionError",
 
     # Модели ошибок
     "ErrorResponse",
@@ -72,4 +73,4 @@ __all__ = [
 ]
 
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

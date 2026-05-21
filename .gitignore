@@ -65,6 +65,7 @@ style.css
 
 # Logs
 *.log
+logs/
 
 # PyCharm
 .idea/

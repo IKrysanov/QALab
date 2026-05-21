@@ -74,25 +74,16 @@ class InMemoryErrorCollector:
 
 
 class AllureErrorReporter:
-    """Прикладывает ошибки к Allure-отчёту и поднимает AssertionError."""
-
-    ATTACHMENT_NAME = "Soft assertion errors"
-
-    @allure.step("[Finalize] Формирование отчёта об ошибках")
     def report(self, errors: List[str]) -> None:
-        if not errors:
-            return
+        with allure.step(f"Отчёт об ошибках: {len(errors)}"):
+            if not errors:
+                return
 
-        aggregated = "\n".join(errors)
-        final_message = f"Найдены ошибки!\n{aggregated}\n"
+            aggregated = "\n".join(errors)
+            final_message = f"Найдены ошибки!\n{aggregated}\n"
 
-        allure.attach(
-            aggregated,
-            name=self.ATTACHMENT_NAME,
-            attachment_type=allure.attachment_type.TEXT,
-        )
-        logger.error(final_message)
-        raise AssertionError(final_message)
+            logger.error(final_message)
+            raise AssertionError(final_message)
 
 
 # ---------------------------------------------------------------------------

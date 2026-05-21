@@ -24,6 +24,7 @@ def to_curl(
                               Пустой набор → не маскировать ничего.
     :param mask_value: чем заменять значение чувствительного заголовка
     """
+
     sensitive = (
         DEFAULT_SENSITIVE_HEADERS
         if sensitive_headers is None

@@ -34,7 +34,7 @@ def pytest_configure(config):
 def api_config(request) -> APIConfig:
     base_url = request.config.base_url
 
-    return APIConfig(host=base_url)
+    return APIConfig(host=base_url, default_headers={"cookie": "test-cookies"})
 
 
 @pytest.fixture(scope="session")

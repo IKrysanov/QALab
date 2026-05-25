@@ -9,7 +9,19 @@ from .config import APIConfig
 from .auth import AsyncAuthStrategy
 from .http_client import AsyncHTTPClient, HttpxAsyncClient
 
-from .endpoints.posts import PostsEndpoint
+from .endpoints.dags import DagsEndpoint
+from .endpoints.dag_runs import DagRunsEndpoint
+from .endpoints.task_instances import TaskInstancesEndpoint
+from .endpoints.variables import VariablesEndpoint
+from .endpoints.connections import ConnectionsEndpoint
+from .endpoints.pools import PoolsEndpoint
+from .endpoints.assets import AssetsEndpoint
+from .endpoints.backfills import BackfillsEndpoint
+from .endpoints.event_logs import EventLogsEndpoint
+from .endpoints.jobs import JobsEndpoint
+from .endpoints.plugins import PluginsEndpoint, ProvidersEndpoint
+from .endpoints.import_errors import ImportErrorsEndpoint
+from .endpoints.monitor import MonitorEndpoint
 
 
 class AsyncAPIClient:
@@ -33,11 +45,37 @@ class AsyncAPIClient:
     """
 
     ENDPOINTS = {
-        "posts": PostsEndpoint,
+        "dags": DagsEndpoint,
+        "dag_runs": DagRunsEndpoint,
+        "task_instances": TaskInstancesEndpoint,
+        "variables": VariablesEndpoint,
+        "connections": ConnectionsEndpoint,
+        "pools": PoolsEndpoint,
+        "assets": AssetsEndpoint,
+        "backfills": BackfillsEndpoint,
+        "event_logs": EventLogsEndpoint,
+        "jobs": JobsEndpoint,
+        "plugins": PluginsEndpoint,
+        "providers": ProvidersEndpoint,
+        "import_errors": ImportErrorsEndpoint,
+        "monitor": MonitorEndpoint,
     }
 
-    # Аннотации для IDE и автодополнения. Реальные атрибуты создаются динамически в _register_endpoints.
-    posts: PostsEndpoint
+    # Аннотации для IDE / автодополнения
+    dags: DagsEndpoint
+    dag_runs: DagRunsEndpoint
+    task_instances: TaskInstancesEndpoint
+    variables: VariablesEndpoint
+    connections: ConnectionsEndpoint
+    pools: PoolsEndpoint
+    assets: AssetsEndpoint
+    backfills: BackfillsEndpoint
+    event_logs: EventLogsEndpoint
+    jobs: JobsEndpoint
+    plugins: PluginsEndpoint
+    providers: ProvidersEndpoint
+    import_errors: ImportErrorsEndpoint
+    monitor: MonitorEndpoint
 
     def __init__(
             self,
@@ -66,6 +104,8 @@ class AsyncAPIClient:
             await_close = self._http.aclose()
             del await_close
             raise
+
+        # TODO: client.py — при ошибке в _register_endpoints() сессия не закрывается корректно(сейчас del await_close — заглушка, нужен await).
 
     def _register_endpoints(self) -> None:
         """

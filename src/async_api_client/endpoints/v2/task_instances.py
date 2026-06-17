@@ -9,9 +9,9 @@ from typing import Any, List, Optional, Union
 
 from httpx import Response
 
-from ..endpoints.base import BaseEndpoint
-from ..http_client import StatusCode
-from ..models.task_instances import (
+from ..base import BaseEndpoint
+from ...http_client import StatusCode
+from ...models.v2.task_instances import (
     BulkTaskInstanceBody,
     ClearTaskInstancesBody,
     ExtraLinkCollectionResponse,
@@ -27,7 +27,7 @@ from ..models.task_instances import (
     TaskInstancesBatchBody,
     UpdateHITLDetailPayload,
 )
-from ..models.xcoms import (
+from ...models.v2.xcoms import (
     XComCollectionResponse,
     XComCreateBody,
     XComResponse,

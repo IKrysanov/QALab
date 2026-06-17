@@ -5,9 +5,9 @@ from typing import Any, Optional, Union
 
 from httpx import Response
 
-from ..endpoints.base import BaseEndpoint
-from ..http_client import StatusCode
-from ..models.backfills import (
+from ..base import BaseEndpoint
+from ...http_client import StatusCode
+from ...models.v2.backfills import (
     BackfillCollectionResponse,
     BackfillPostBody,
     BackfillResponse,

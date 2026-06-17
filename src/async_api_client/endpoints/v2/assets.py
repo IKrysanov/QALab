@@ -5,9 +5,9 @@ from typing import Any, List, Optional, Union
 
 from httpx import Response
 
-from .base import BaseEndpoint
-from ..http_client import StatusCode
-from ..models.assets import (
+from ..base import BaseEndpoint
+from ...http_client import StatusCode
+from ...models.v2.assets import (
     AssetAliasCollectionResponse,
     AssetAliasResponse,
     AssetCollectionResponse,

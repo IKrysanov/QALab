@@ -5,9 +5,9 @@ from typing import Optional
 
 from httpx import Response
 
-from ..endpoints.base import BaseEndpoint
-from ..http_client import StatusCode
-from ..models.monitor import (
+from ..base import BaseEndpoint
+from ...http_client import StatusCode
+from ...models.v2.monitor import (
     PluginCollectionResponse,
     PluginImportErrorCollectionResponse,
     ProviderCollectionResponse,
@@ -48,7 +48,7 @@ class PluginsEndpoint(BaseEndpoint):
 
 
 class ProvidersEndpoint(BaseEndpoint):
-    PATH = f"{BASE}/providers"
+    PATH = "/providers"
 
     async def list(
             self,

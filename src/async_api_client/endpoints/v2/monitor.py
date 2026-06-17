@@ -8,9 +8,9 @@ from typing import Optional
 
 from httpx import Response
 
-from ..endpoints.base import BaseEndpoint
-from ..http_client import StatusCode
-from ..models.monitor import Config, HealthInfoResponse, VersionInfo
+from ..base import BaseEndpoint
+from ...http_client import StatusCode
+from ...models.v2.monitor import Config, HealthInfoResponse, VersionInfo
 
 
 class MonitorEndpoint(BaseEndpoint):

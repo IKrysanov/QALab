@@ -9,19 +9,40 @@ from .config import APIConfig
 from .auth import AsyncAuthStrategy
 from .http_client import AsyncHTTPClient, HttpxAsyncClient
 
-from .endpoints.dags import DagsEndpoint
-from .endpoints.dag_runs import DagRunsEndpoint
-from .endpoints.task_instances import TaskInstancesEndpoint
-from .endpoints.variables import VariablesEndpoint
-from .endpoints.connections import ConnectionsEndpoint
-from .endpoints.pools import PoolsEndpoint
-from .endpoints.assets import AssetsEndpoint
-from .endpoints.backfills import BackfillsEndpoint
-from .endpoints.event_logs import EventLogsEndpoint
-from .endpoints.jobs import JobsEndpoint
-from .endpoints.plugins import PluginsEndpoint, ProvidersEndpoint
-from .endpoints.import_errors import ImportErrorsEndpoint
-from .endpoints.monitor import MonitorEndpoint
+from .endpoints.v2 import (
+    DagsEndpoint,
+    DagRunsEndpoint,
+    TaskInstancesEndpoint,
+    VariablesEndpoint,
+    ConnectionsEndpoint,
+    PoolsEndpoint,
+    AssetsEndpoint,
+    BackfillsEndpoint,
+    EventLogsEndpoint,
+    JobsEndpoint,
+    PluginsEndpoint,
+    ProvidersEndpoint,
+    ImportErrorsEndpoint,
+    MonitorEndpoint,
+)
+from .endpoints.v1 import (
+    DagsEndpoint as DagsEndpointV1,
+    DagRunsEndpoint as DagRunsEndpointV1,
+    TaskInstancesEndpoint as TaskInstancesEndpointV1,
+    ConnectionsEndpoint as ConnectionsEndpointV1,
+    VariablesEndpoint as VariablesEndpointV1,
+    PoolsEndpoint as PoolsEndpointV1,
+)
+
+
+def _resolve_api_version(config: APIConfig) -> str:
+    """Определить версию набора эндпоинтов по ``APIConfig.prefix_path``.
+
+    ``/api/v1`` → ``"v1"`` (Airflow 2.x), всё остальное (в т.ч. ``/api/v2``)
+    → ``"v2"`` (Airflow 3.x, поведение по умолчанию).
+    """
+    last = config.prefix_path.strip("/").rsplit("/", 1)[-1].lower()
+    return "v1" if last == "v1" else "v2"
 
 
 class AsyncAPIClient:
@@ -44,7 +65,8 @@ class AsyncAPIClient:
     - users: статическая аннотация для IDE; реальный атрибут создаётся динамически.
     """
 
-    ENDPOINTS = {
+    # Полный набор Airflow 3.x (/api/v2).
+    ENDPOINTS_V2 = {
         "dags": DagsEndpoint,
         "dag_runs": DagRunsEndpoint,
         "task_instances": TaskInstancesEndpoint,
@@ -60,8 +82,20 @@ class AsyncAPIClient:
         "import_errors": ImportErrorsEndpoint,
         "monitor": MonitorEndpoint,
     }
+    # Airflow 2.x (/api/v1) — DAG, DAGRun, TaskInstance, Connection, Variable, Pool.
+    ENDPOINTS_V1 = {
+        "dags": DagsEndpointV1,
+        "dag_runs": DagRunsEndpointV1,
+        "task_instances": TaskInstancesEndpointV1,
+        "connections": ConnectionsEndpointV1,
+        "variables": VariablesEndpointV1,
+        "pools": PoolsEndpointV1,
+    }
+    # Дефолтный набор (используется при version="v2").
+    ENDPOINTS = ENDPOINTS_V2
 
-    # Аннотации для IDE / автодополнения
+    # Аннотации для IDE / автодополнения (ресурсы, общие для обеих версий —
+    # реальный класс зависит от версии из APIConfig).
     dags: DagsEndpoint
     dag_runs: DagRunsEndpoint
     task_instances: TaskInstancesEndpoint
@@ -98,6 +132,11 @@ class AsyncAPIClient:
             validate_status=validate_status,
         )
 
+        # Набор эндпоинтов выбирается по версии API из APIConfig (/api/v1 vs /api/v2).
+        self._endpoints = (
+            self.ENDPOINTS_V1 if _resolve_api_version(config) == "v1" else self.ENDPOINTS_V2
+        )
+
         try:
             self._register_endpoints()
         except Exception:
@@ -120,7 +159,7 @@ class AsyncAPIClient:
         например: `client.users`.
         """
 
-        for name, cls in self.ENDPOINTS.items():
+        for name, cls in self._endpoints.items():
             setattr(self, name, cls(self._http, self))
 
     async def __aenter__(self) -> "AsyncAPIClient":

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
-from .common import ReprocessBehavior
+from ..common import ReprocessBehavior
 
 
 class BackfillResponse(BaseModel):

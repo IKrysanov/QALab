@@ -1,36 +1,11 @@
-"""Эндпоинты по ресурсам API."""
+"""Эндпоинты по ресурсам API.
+
+Версионные наборы лежат в подпакетах:
+  • ``endpoints.v1`` — Airflow 2.x, Stable REST API ``/api/v1``;
+  • ``endpoints.v2`` — Airflow 3.x, REST API ``/api/v2``.
+``BaseEndpoint`` общий для обеих версий.
+"""
 
 from .base import BaseEndpoint
-from .posts import PostsEndpoint
-from .dags import DagsEndpoint
-from .dag_runs import DagRunsEndpoint
-from .task_instances import TaskInstancesEndpoint
-from .variables import VariablesEndpoint
-from .connections import ConnectionsEndpoint
-from .pools import PoolsEndpoint
-from .assets import AssetsEndpoint
-from .backfills import BackfillsEndpoint
-from .event_logs import EventLogsEndpoint
-from .jobs import JobsEndpoint
-from .plugins import PluginsEndpoint, ProvidersEndpoint
-from .import_errors import ImportErrorsEndpoint
-from .monitor import MonitorEndpoint
 
-__all__ = [
-    "BaseEndpoint",
-    # Airflow
-    "DagsEndpoint",
-    "DagRunsEndpoint",
-    "TaskInstancesEndpoint",
-    "VariablesEndpoint",
-    "ConnectionsEndpoint",
-    "PoolsEndpoint",
-    "AssetsEndpoint",
-    "BackfillsEndpoint",
-    "EventLogsEndpoint",
-    "JobsEndpoint",
-    "PluginsEndpoint",
-    "ProvidersEndpoint",
-    "ImportErrorsEndpoint",
-    "MonitorEndpoint",
-]
+__all__ = ["BaseEndpoint"]

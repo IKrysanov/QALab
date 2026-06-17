@@ -4,7 +4,7 @@ from typing import Any, List, Optional
 
 from pydantic import BaseModel
 
-from .common import BulkActionOnExistence, BulkActionNotOnExistence
+from ..common import BulkActionOnExistence, BulkActionNotOnExistence
 
 
 class VariableResponse(BaseModel):

@@ -8,9 +8,9 @@ from typing import Any, List, Optional, Union
 
 from httpx import Response
 
-from ..endpoints.base import BaseEndpoint
-from ..http_client import StatusCode
-from ..models.dags import (
+from ..base import BaseEndpoint
+from ...http_client import StatusCode
+from ...models.v2.dags import (
     DAGCollectionResponse,
     DAGDetailsResponse,
     DAGPatchBody,

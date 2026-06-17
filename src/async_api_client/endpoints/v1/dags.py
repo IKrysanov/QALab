@@ -34,6 +34,7 @@ class DagsEndpoint(BaseEndpoint):
             dag_id_pattern: Optional[str] = None,
             fields: Optional[List[str]] = None,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         """GET /api/v1/dags."""
         params = {k: v for k, v in {
@@ -51,6 +52,7 @@ class DagsEndpoint(BaseEndpoint):
             params=params or None,
             expected_status=expected_status,
             response_model=DAGCollectionResponse if expected_status == HTTPStatus.OK else None,
+            **kwargs,
         )
 
     async def get(
@@ -58,6 +60,7 @@ class DagsEndpoint(BaseEndpoint):
             dag_id: str,
             fields: Optional[List[str]] = None,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         """GET /api/v1/dags/{dag_id}."""
         params = {"fields": fields} if fields else None
@@ -66,6 +69,7 @@ class DagsEndpoint(BaseEndpoint):
             params=params,
             expected_status=expected_status,
             response_model=DAGResponse if expected_status == HTTPStatus.OK else None,
+            **kwargs,
         )
 
     async def patch(

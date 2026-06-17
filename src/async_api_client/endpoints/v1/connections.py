@@ -29,6 +29,7 @@ class ConnectionsEndpoint(BaseEndpoint):
             offset: Optional[int] = None,
             order_by: Optional[str] = None,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         """GET /api/v1/connections."""
         params = {k: v for k, v in {
@@ -41,18 +42,21 @@ class ConnectionsEndpoint(BaseEndpoint):
             params=params or None,
             expected_status=expected_status,
             response_model=ConnectionCollectionResponse if expected_status == HTTPStatus.OK else None,
+            **kwargs,
         )
 
     async def get(
             self,
             connection_id: str,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         """GET /api/v1/connections/{connection_id}."""
         return await self._http.get(
             f"{self.PATH}/{connection_id}",
             expected_status=expected_status,
             response_model=ConnectionResponse if expected_status == HTTPStatus.OK else None,
+            **kwargs,
         )
 
     async def create(

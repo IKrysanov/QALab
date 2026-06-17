@@ -28,6 +28,7 @@ class PoolsEndpoint(BaseEndpoint):
             offset: Optional[int] = None,
             order_by: Optional[str] = None,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         """GET /api/v1/pools."""
         params = {k: v for k, v in {
@@ -40,18 +41,21 @@ class PoolsEndpoint(BaseEndpoint):
             params=params or None,
             expected_status=expected_status,
             response_model=PoolCollectionResponse if expected_status == HTTPStatus.OK else None,
+            **kwargs,
         )
 
     async def get(
             self,
             pool_name: str,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         """GET /api/v1/pools/{pool_name}."""
         return await self._http.get(
             f"{self.PATH}/{pool_name}",
             expected_status=expected_status,
             response_model=PoolResponse if expected_status == HTTPStatus.OK else None,
+            **kwargs,
         )
 
     async def create(

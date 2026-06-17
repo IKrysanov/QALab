@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from http import HTTPStatus
 from typing import Any, List, Optional, Sequence, Type, TypeVar
 
 import allure
@@ -61,7 +62,7 @@ from src.async_api_client.models.v1.pools import (
     PoolResponse,
 )
 
-from .exceptions import WaitTimeoutError
+from .exceptions import AirflowClientError, WaitTimeoutError
 from .states import TERMINAL_DAG_RUN_STATES, TERMINAL_TASK_INSTANCE_STATES
 
 M = TypeVar("M", bound=BaseModel)
@@ -444,6 +445,27 @@ class AirflowClient:
         """GET /connections/{connection_id}."""
         resp = await self._api.connections.get(connection_id)
         return _parse(resp, ConnectionResponse)
+
+    async def connection_exist(self, connection_id: str) -> bool:
+        """Проверить, существует ли соединение (удобно в фикстурах set up/tear down).
+
+        Делает GET без валидации статуса/тела: ``200`` → ``True``, ``404`` → ``False``.
+        Любой другой статус — это не «нет/есть», а реальная проблема (нет прав,
+        5xx и т.п.), поэтому поднимаем :class:`AirflowClientError`.
+        """
+        resp = await self._api.connections.get(
+            connection_id, validate_status=False, validate_response=False,
+        )
+        if resp.status_code == HTTPStatus.OK:
+            logger.debug("Connection '%s' exists", connection_id)
+            return True
+        if resp.status_code == HTTPStatus.NOT_FOUND:
+            logger.debug("Connection '%s' does not exist", connection_id)
+            return False
+        raise AirflowClientError(
+            f"Unexpected status {resp.status_code} while checking connection "
+            f"'{connection_id}': {resp.text}"
+        )
 
     async def list_connections(self, **kwargs: Any) -> List[ConnectionCollectionItem]:
         """Список соединений (limit/offset/order_by пробрасываются)."""

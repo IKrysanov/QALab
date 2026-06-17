@@ -28,6 +28,7 @@ class VariablesEndpoint(BaseEndpoint):
             offset: Optional[int] = None,
             order_by: Optional[str] = None,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         """GET /api/v1/variables."""
         params = {k: v for k, v in {
@@ -40,18 +41,21 @@ class VariablesEndpoint(BaseEndpoint):
             params=params or None,
             expected_status=expected_status,
             response_model=VariableCollectionResponse if expected_status == HTTPStatus.OK else None,
+            **kwargs,
         )
 
     async def get(
             self,
             variable_key: str,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         """GET /api/v1/variables/{variable_key}."""
         return await self._http.get(
             f"{self.PATH}/{variable_key}",
             expected_status=expected_status,
             response_model=VariableResponse if expected_status == HTTPStatus.OK else None,
+            **kwargs,
         )
 
     async def create(

@@ -1,26 +1,33 @@
-"""Синхронный health-check внешних систем данных для pytest.
+"""Синхронный клиент проверок и запросов к внешним системам данных (pytest).
+
+Отправляет ``curl`` (HTTP-системы) и ``psql`` (GreenPlum) через subprocess:
+  * ``check_http`` / ``check_greenplum`` — доступность (assert на статус);
+  * ``request`` — произвольный HTTP-запрос, возвращает ``(status_code, body)``.
+Запросы под конкретные системы (например, Trino ``/v1/statement``) собираются
+в самих тестах из ``request``. Изолировано от оркестратора (Airflow).
 
 Использование в тестах::
     client = DataSystemHealthClient()
     client.check_http(TrinoConfig(base_url="http://trino:8080"))
-    client.check_greenplum(GreenPlumConfig(host="greenplum", password="secret"))
+    code, body = client.request(
+        TrinoConfig(base_url="http://trino:8080"),
+        method="POST", path="/v1/statement", data="SELECT 1",
+    )
 """
 
 import logging
 import os
 import shlex
 import subprocess
-from typing import List, Mapping, Optional, Union
+from typing import List, Mapping, Optional, Tuple
 
-from .config import GreenPlumConfig, HTTPSystemConfig
+from .config import HTTPSystemConfig
 
 logger = logging.getLogger("infra.health")
 
-AnyConfig = Union[HTTPSystemConfig, GreenPlumConfig]
-
 
 class DataSystemHealthClient:
-    """Проверка доступности внешних систем через subprocess (curl/psql)."""
+    """Проверки и запросы к внешним системам через subprocess (curl/psql)."""
 
     def __init__(
             self,
@@ -58,67 +65,114 @@ class DataSystemHealthClient:
             f"{proc.stderr.strip() or proc.stdout.strip() or 'exit ' + str(proc.returncode)}"
         )
 
-    def check(self, config: AnyConfig) -> None:
-        """Проверить систему по типу конфига. AssertionError, если недоступна."""
-        if isinstance(config, GreenPlumConfig):
-            self.check_greenplum(config)
-        else:
-            self.check_http(config)
-
     def check_http(self, config: HTTPSystemConfig) -> None:
         """curl к health-эндпоинту; assert на 2xx/3xx (или ``expected_status``)."""
-        argv = [
-            self._curl_bin, "-sS", "-o", "/dev/null",
-            "-w", "%{http_code}", "--max-time", str(config.timeout),
-        ]
+        argv = self._build_curl(config, config.url, capture_body=False)
+        logger.info("%s curl: %s", config.name, self._format_command(argv))
+        result = self._run(argv, config.timeout)
+
+        code = result.stdout.strip()
+        ok = (
+                result.returncode == 0
+                and code.isdigit()
+                and self._status_ok(int(code), config.expected_status)
+        )
+        logger.info("%s -> %s (HTTP %s)", config.name, "OK" if ok else "FAIL", code or "?")
+        assert ok, (
+                f"System '{config.name}' недоступна: {config.url} -> HTTP {code or '?'} "
+                f"(curl exit {result.returncode})"
+                + (f": {result.stderr.strip()}" if result.stderr.strip() else "")
+        )
+
+    def request(
+            self,
+            config: HTTPSystemConfig,
+            method: str = "GET",
+            path: Optional[str] = None,
+            data: Optional[str] = None,
+            headers: Optional[Mapping[str, str]] = None,
+            expected_status: Tuple[int, ...] = (),
+    ) -> Tuple[int, str]:
+        """Произвольный HTTP-запрос; вернуть ``(status_code, body)``.
+
+        :param path: путь поверх ``base_url`` (по умолчанию — ``config.url``)
+        :param data: тело запроса (для POST/PUT)
+        :param headers: доп. заголовки поверх ``config.request_headers()``
+        :param expected_status: допустимые коды; пусто -> любой 2xx/3xx
+        assert, если код вне ожидаемого диапазона.
+        """
+        url = config.url if path is None else f"{config.base_url.rstrip('/')}/{path.lstrip('/')}"
+        return self._curl(config, url, method, data, headers, expected_status, config.name)
+
+    # --------------------------------------------------------------------- #
+    # Внутренняя кухня
+    # --------------------------------------------------------------------- #
+    def _build_curl(
+            self,
+            config: HTTPSystemConfig,
+            url: str,
+            method: str = "GET",
+            data: Optional[str] = None,
+            headers: Optional[Mapping[str, str]] = None,
+            capture_body: bool = False,
+    ) -> List[str]:
+        """Собрать argv для curl. ``capture_body`` -> тело в stdout, иначе только код."""
+        argv = [self._curl_bin, "-sS"]
+        if capture_body:
+            argv += ["-w", "\n%{http_code}"]
+        else:
+            argv += ["-o", "/dev/null", "-w", "%{http_code}"]
+        argv += ["--max-time", str(config.timeout)]
+
         if not config.verify_tls:
             argv.append("--insecure")
         if config.kerberos:
             argv += ["--negotiate", "-u", ":"]
         elif config.username:
             argv += ["-u", f"{config.username}:{config.password}"]
-        for key, value in config.request_headers().items():
+
+        if method.upper() != "GET":
+            argv += ["-X", method.upper()]
+
+        merged = config.request_headers()
+        if headers:
+            merged = {**merged, **headers}
+        for key, value in merged.items():
             argv += ["-H", f"{key}: {value}"]
+
+        if data is not None:
+            argv += ["--data", data]
+
         argv += list(config.extra_args)
-        argv.append(config.url)
+        argv.append(url)
+        return argv
 
-        logger.info("%s curl: %s", config.name, self._format_command(argv))
+    def _curl(
+            self,
+            config: HTTPSystemConfig,
+            url: str,
+            method: str,
+            data: Optional[str],
+            headers: Optional[Mapping[str, str]],
+            expected_status: Tuple[int, ...],
+            label: str,
+    ) -> Tuple[int, str]:
+        """Выполнить curl с возвратом тела; assert на статус. -> ``(code, body)``."""
+        argv = self._build_curl(config, url, method, data, headers, capture_body=True)
+        logger.info("%s curl: %s", label, self._format_command(argv))
         result = self._run(argv, config.timeout)
-        code = result.stdout.strip()
-        ok = (
-            result.returncode == 0
-            and code.isdigit()
-            and self._status_ok(int(code), config)
-        )
 
-        logger.info("%s -> %s (HTTP %s)", config.name, "OK" if ok else "FAIL", code or "?")
+        body, _, code_str = result.stdout.rpartition("\n")
+        code = int(code_str) if code_str.strip().isdigit() else 0
+        ok = result.returncode == 0 and self._status_ok(code, expected_status)
+
+        logger.info("%s -> HTTP %s", label, code or "?")
         assert ok, (
-            f"System '{config.name}' недоступна: {config.url} -> HTTP {code or '?'} "
-            f"(curl exit {result.returncode})"
-            + (f": {result.stderr.strip()}" if result.stderr.strip() else "")
+                f"Request {method.upper()} {url} -> HTTP {code or '?'} "
+                f"(curl exit {result.returncode})"
+                + (f": {result.stderr.strip()}" if result.stderr.strip() else "")
         )
-
-    def check_greenplum(self, config: GreenPlumConfig) -> None:
-        """psql ``SELECT 1``; assert на успешный код возврата."""
-        argv = [
-            self._psql_bin,
-            "-h", config.host, "-p", str(config.port),
-            "-U", config.username, "-d", config.database,
-            "-w", "-tAc", config.query,
-        ]
-        env = {"PGCONNECT_TIMEOUT": str(int(config.timeout))}
-        if config.password:
-            env["PGPASSWORD"] = config.password
-
-        logger.info("%s psql: %s", config.name, self._format_command(argv))
-        result = self._run(argv, config.timeout, env=env)
-        ok = result.returncode == 0
-
-        logger.info("%s -> %s", config.name, "OK" if ok else "FAIL")
-        assert ok, (
-            f"System '{config.name}' недоступна: {config.host}:{config.port} -> "
-            f"{result.stderr.strip() or 'psql exit ' + str(result.returncode)}"
-        )
+        return code, body
 
     @staticmethod
     def _format_command(argv: List[str]) -> str:
@@ -133,9 +187,9 @@ class DataSystemHealthClient:
         return " ".join(parts)
 
     @staticmethod
-    def _status_ok(code: int, config: HTTPSystemConfig) -> bool:
-        if config.expected_status:
-            return code in config.expected_status
+    def _status_ok(code: int, expected_status: Tuple[int, ...]) -> bool:
+        if expected_status:
+            return code in expected_status
         return 200 <= code < 400
 
     def _run(

@@ -8,6 +8,7 @@
 
 import logging
 import os
+import shlex
 import subprocess
 from typing import List, Mapping, Optional, Union
 
@@ -21,9 +22,41 @@ AnyConfig = Union[HTTPSystemConfig, GreenPlumConfig]
 class DataSystemHealthClient:
     """Проверка доступности внешних систем через subprocess (curl/psql)."""
 
-    def __init__(self, curl_bin: str = "curl", psql_bin: str = "psql") -> None:
+    def __init__(
+            self,
+            curl_bin: str = "curl",
+            psql_bin: str = "psql",
+            kinit_bin: str = "kinit",
+    ) -> None:
         self._curl_bin = curl_bin
         self._psql_bin = psql_bin
+        self._kinit_bin = kinit_bin
+
+    def kinit(self, principal: str, password: str, timeout: float = 30.0) -> None:
+        """Получить Kerberos-тикет (``kinit``); пароль подаётся через stdin.
+
+        Вызывать в setup-фикстуре до Kerberos-проверок (``kerberos=True``).
+        AssertionError, если тикет получить не удалось.
+        """
+        try:
+            proc = subprocess.run(
+                [self._kinit_bin, principal],
+                input=password,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except FileNotFoundError:
+            assert False, f"Бинарник '{self._kinit_bin}' не найден в PATH"
+        except subprocess.TimeoutExpired:
+            assert False, f"Таймаут kinit для '{principal}' ({timeout}s)"
+
+        ok = proc.returncode == 0
+        logger.info("kinit %s -> %s", principal, "OK" if ok else "FAIL")
+        assert ok, (
+            f"kinit для '{principal}' не удался: "
+            f"{proc.stderr.strip() or proc.stdout.strip() or 'exit ' + str(proc.returncode)}"
+        )
 
     def check(self, config: AnyConfig) -> None:
         """Проверить систему по типу конфига. AssertionError, если недоступна."""
@@ -40,12 +73,15 @@ class DataSystemHealthClient:
         ]
         if not config.verify_tls:
             argv.append("--insecure")
-        if config.username:
+        if config.kerberos:
+            argv += ["--negotiate", "-u", ":"]
+        elif config.username:
             argv += ["-u", f"{config.username}:{config.password}"]
-        for key, value in config.headers.items():
+        for key, value in config.request_headers().items():
             argv += ["-H", f"{key}: {value}"]
         argv.append(config.url)
 
+        logger.info("%s curl: %s", config.name, self._format_command(argv))
         result = self._run(argv, config.timeout)
         code = result.stdout.strip()
         ok = (
@@ -73,6 +109,7 @@ class DataSystemHealthClient:
         if config.password:
             env["PGPASSWORD"] = config.password
 
+        logger.info("%s psql: %s", config.name, self._format_command(argv))
         result = self._run(argv, config.timeout, env=env)
         ok = result.returncode == 0
 
@@ -81,6 +118,18 @@ class DataSystemHealthClient:
             f"System '{config.name}' недоступна: {config.host}:{config.port} -> "
             f"{result.stderr.strip() or 'psql exit ' + str(result.returncode)}"
         )
+
+    @staticmethod
+    def _format_command(argv: List[str]) -> str:
+        """Готовая команда строкой; пароль в ``-u user:pass`` маскируется."""
+        parts: List[str] = []
+        for i, part in enumerate(argv):
+            if i > 0 and argv[i - 1] == "-u":
+                user, sep, pwd = part.partition(":")
+                if sep and pwd:
+                    part = f"{user}:***"
+            parts.append(shlex.quote(part))
+        return " ".join(parts)
 
     @staticmethod
     def _status_ok(code: int, config: HTTPSystemConfig) -> bool:

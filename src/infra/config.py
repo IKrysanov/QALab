@@ -17,6 +17,8 @@ class HTTPSystemConfig:
     :param timeout: таймаут запроса в секундах (curl --max-time)
     :param verify_tls: проверять ли TLS-сертификат (False -> curl --insecure)
     :param expected_status: набор допустимых HTTP-кодов; пусто -> любой 2xx/3xx
+    :param kerberos: SPNEGO/Kerberos-аутентификация (curl --negotiate -u :);
+        требует валидного тикета — получить заранее через ``kinit``
     """
 
     base_url: str
@@ -28,19 +30,36 @@ class HTTPSystemConfig:
     timeout: float = 10.0
     verify_tls: bool = True
     expected_status: Tuple[int, ...] = ()
+    kerberos: bool = False
 
     @property
     def url(self) -> str:
         """Полный URL health-эндпоинта."""
         return f"{self.base_url.rstrip('/')}/{self.health_path.lstrip('/')}"
 
+    def request_headers(self) -> Dict[str, str]:
+        """Заголовки для curl (``-H``). Подклассы могут дополнять."""
+        return dict(self.headers)
+
 
 @dataclass(frozen=True)
 class TrinoConfig(HTTPSystemConfig):
-    """Trino: health-эндпоинт ``/v1/info`` (отдаёт 200 на живом координаторе)."""
+    """Trino: health-эндпоинт ``/v1/info`` (отдаёт 200 на живом координаторе).
+
+    :param user: идентификатор пользователя — уходит в заголовок ``X-Trino-User``
+        (Trino требует его в каждом запросе). Явный заголовок в ``headers``
+        имеет приоритет.
+    """
 
     name: str = "trino"
     health_path: str = "/v1/info"
+    user: str = "health-check"
+
+    def request_headers(self) -> Dict[str, str]:
+        headers = dict(self.headers)
+        if self.user:
+            headers.setdefault("X-Trino-User", self.user)
+        return headers
 
 
 @dataclass(frozen=True)

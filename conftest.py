@@ -6,6 +6,7 @@ import pytest_asyncio
 from src.async_api_client.config import APIConfig, WebUIConfig
 from src.async_api_client.auth import SessionLoginAuth
 from src.async_api_client.client import AsyncAPIClient
+from src.infra import DataSystemHealthClient
 
 from utils.logger import configure_logging
 from utils.environment import ConfigEnv
@@ -83,3 +84,21 @@ async def api_client_with_auth_session(api_config, http_session, session_auth):
             session=http_session,
     ) as client:
         yield client
+
+
+@pytest.fixture(scope="session")
+@allure.title("Health-check client for external data systems")
+def health_client() -> DataSystemHealthClient:
+    """Клиент health-check'ов внешних систем (GreenPlum/Trino/ClickHouse/Spark).
+
+    Если задана ``KRB_PRINCIPAL``, в setup делается ``kinit`` (пароль —
+    ``KRB_PASSWORD``), чтобы curl с ``kerberos=True`` ходил по валидному тикету.
+    """
+    client = DataSystemHealthClient()
+
+    principal = config_env.get("KRB_PRINCIPAL")
+    if principal:
+        password = config_env.get("KRB_PASSWORD", required=True)
+        client.kinit(principal, password)
+
+    return client

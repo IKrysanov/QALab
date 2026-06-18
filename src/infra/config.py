@@ -19,6 +19,8 @@ class HTTPSystemConfig:
     :param expected_status: набор допустимых HTTP-кодов; пусто -> любой 2xx/3xx
     :param kerberos: SPNEGO/Kerberos-аутентификация (curl --negotiate -u :);
         требует валидного тикета — получить заранее через ``kinit``
+    :param extra_args: произвольные доп. флаги curl как есть, напр.
+        ``("--insecure", "--http1.1")`` — добавляются перед URL
     """
 
     base_url: str
@@ -31,6 +33,7 @@ class HTTPSystemConfig:
     verify_tls: bool = True
     expected_status: Tuple[int, ...] = ()
     kerberos: bool = False
+    extra_args: Tuple[str, ...] = ()
 
     @property
     def url(self) -> str:

@@ -79,6 +79,7 @@ class DataSystemHealthClient:
             argv += ["-u", f"{config.username}:{config.password}"]
         for key, value in config.request_headers().items():
             argv += ["-H", f"{key}: {value}"]
+        argv += list(config.extra_args)
         argv.append(config.url)
 
         logger.info("%s curl: %s", config.name, self._format_command(argv))

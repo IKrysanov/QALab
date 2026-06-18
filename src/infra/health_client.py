@@ -1,8 +1,9 @@
 """Синхронный клиент проверок и запросов к внешним системам данных (pytest).
 
-Отправляет ``curl`` (HTTP-системы) и ``psql`` (GreenPlum) через subprocess:
-  * ``check_http`` / ``check_greenplum`` — доступность (assert на статус);
-  * ``request`` — произвольный HTTP-запрос, возвращает ``(status_code, body)``.
+  * HTTP-системы (Trino/ClickHouse/Spark) — через ``curl`` (subprocess):
+    ``check_http`` (доступность, assert) и ``request`` (-> ``(status_code, body)``).
+  * GreenPlum — через ``psycopg2`` (PostgreSQL wire protocol, psql не нужен):
+    ``check_greenplum`` выполняет запрос и возвращает строки.
 Запросы под конкретные системы (например, Trino ``/v1/statement``) собираются
 в самих тестах из ``request``. Изолировано от оркестратора (Airflow).
 
@@ -21,7 +22,7 @@ import shlex
 import subprocess
 from typing import List, Mapping, Optional, Tuple
 
-from .config import HTTPSystemConfig
+from .config import GreenPlumConfig, HTTPSystemConfig
 
 logger = logging.getLogger("infra.health")
 
@@ -32,11 +33,9 @@ class DataSystemHealthClient:
     def __init__(
             self,
             curl_bin: str = "curl",
-            psql_bin: str = "psql",
             kinit_bin: str = "kinit",
     ) -> None:
         self._curl_bin = curl_bin
-        self._psql_bin = psql_bin
         self._kinit_bin = kinit_bin
 
     def kinit(self, principal: str, password: str, timeout: float = 30.0) -> None:
@@ -103,6 +102,48 @@ class DataSystemHealthClient:
         """
         url = config.url if path is None else f"{config.base_url.rstrip('/')}/{path.lstrip('/')}"
         return self._curl(config, url, method, data, headers, expected_status, config.name)
+
+    def check_greenplum(self, config: GreenPlumConfig) -> List[tuple]:
+        """Выполнить ``config.query`` в GreenPlum через psycopg2; вернуть строки.
+
+        Подключение по PostgreSQL wire protocol (psql не нужен). По умолчанию
+        запрос ``SELECT 1``. AssertionError при ошибке подключения/запроса.
+        """
+        try:
+            import psycopg2
+        except ImportError:
+            assert False, "psycopg2 не установлен — добавь psycopg2-binary в зависимости"
+
+        logger.info(
+            "%s psycopg2: %s@%s:%s/%s query=%r",
+            config.name, config.username, config.host, config.port,
+            config.database, config.query,
+        )
+        conn = None
+        try:
+            conn = psycopg2.connect(
+                host=config.host,
+                port=config.port,
+                dbname=config.database,
+                user=config.username,
+                password=config.password or None,
+                connect_timeout=int(config.timeout),
+            )
+            with conn.cursor() as cur:
+                cur.execute(config.query)
+                rows = cur.fetchall() if cur.description else []
+        except psycopg2.Error as exc:
+            logger.warning("%s -> FAIL", config.name)
+            assert False, (
+                f"System '{config.name}' недоступна: {config.host}:{config.port} -> "
+                f"{str(exc).strip()}"
+            )
+        finally:
+            if conn is not None:
+                conn.close()
+
+        logger.info("%s -> OK (%d rows)", config.name, len(rows))
+        return rows
 
     # --------------------------------------------------------------------- #
     # Внутренняя кухня

@@ -163,9 +163,34 @@ class AirflowClient:
         return _parse(resp, DAGRunResponse)
 
     async def list_dag_runs(self, dag_id: str, **kwargs: Any) -> List[DAGRunResponse]:
-        """Список DAGRun-ов для DAG (фильтры пробрасываются в endpoint)."""
+        """Список DAGRun-ов для DAG (одна страница; фильтры пробрасываются в endpoint)."""
         resp = await self._api.dag_runs.list(dag_id, **kwargs)
         return _parse(resp, DAGRunCollectionResponse).dag_runs
+
+    async def get_all_dag_runs(
+            self,
+            dag_id: str,
+            *,
+            batch_size: int = 100,
+            **kwargs: Any,
+    ) -> List[DAGRunResponse]:
+        """Получить ВСЕ DAGRun-ы DAG-а, проходя пагинацию.
+
+        ``limit``/``offset`` управляются автоматически (страница — ``batch_size``);
+        остальные фильтры (``state``/``execution_date_lte``/``order_by``/...) пробрасываются
+        в endpoint и применяются на стороне Airflow.
+        """
+        runs: List[DAGRunResponse] = []
+        offset = 0
+        while True:
+            page = await self.list_dag_runs(
+                dag_id, limit=batch_size, offset=offset, **kwargs,
+            )
+            runs.extend(page)
+            if len(page) < batch_size:
+                break
+            offset += batch_size
+        return runs
 
     async def wait_for_dag_run(
             self,
@@ -255,6 +280,66 @@ class AirflowClient:
         resp = await self._api.dag_runs.set_note(dag_id, dag_run_id, SetDagRunNoteBody(note=note))
         logger.debug("Set note on DAG run '%s/%s'", dag_id, dag_run_id)
         return _parse(resp, DAGRunResponse)
+
+    async def cleanup_old_dag_runs(
+            self,
+            dag_id: str,
+            *,
+            older_than: Optional[str] = None,
+            keep_last: Optional[int] = None,
+            states: Optional[Sequence[str]] = None,
+            batch_size: int = 100,
+            dry_run: bool = False,
+    ) -> List[str]:
+        """Удалить старые DAGRun-ы у DAG-а; вернуть id удалённых прогонов.
+
+        «Старый» задаётся хотя бы одним критерием (можно комбинировать):
+          * ``older_than`` — ISO-дата; удаляются прогоны с ``execution_date`` <= неё
+            (фильтр ``execution_date_lte`` на стороне API);
+          * ``keep_last`` — оставить ``keep_last`` самых свежих прогонов, остальные удалить.
+        ``states`` ограничивает удаление прогонами в указанных состояниях.
+        ``dry_run=True`` ничего не удаляет — только возвращает id кандидатов.
+
+        Бросает :class:`ValueError`, если не задан ни ``older_than``, ни ``keep_last``
+        (защита от случайного сноса всех прогонов DAG-а).
+        """
+        if older_than is None and keep_last is None:
+            raise ValueError(
+                "cleanup_old_dag_runs requires 'older_than' or 'keep_last' "
+                "(refusing to delete all dag runs)"
+            )
+
+        # Свежие — первыми (keep_last отрезает «голову», удаляется «хвост»).
+        runs = await self.get_all_dag_runs(
+            dag_id,
+            execution_date_lte=older_than,
+            state=list(states) if states else None,
+            order_by="-execution_date",
+            batch_size=batch_size,
+        )
+
+        to_delete = runs[keep_last:] if keep_last is not None else runs
+        deleted: List[str] = []
+
+        with allure.step(
+                f"Cleanup dag runs of '{dag_id}' "
+                f"({'dry-run, ' if dry_run else ''}{len(to_delete)} of {len(runs)})"
+        ):
+            for run in to_delete:
+                if not dry_run:
+                    await self._api.dag_runs.delete(dag_id, run.dag_run_id)
+                deleted.append(run.dag_run_id)
+                logger.debug(
+                    "%s dag run '%s/%s'",
+                    "Would delete" if dry_run else "Deleted", dag_id, run.dag_run_id,
+                )
+
+        logger.info(
+            "Cleanup '%s': %s %d dag run(s) (kept %d, scanned %d)",
+            dag_id, "would delete" if dry_run else "deleted",
+            len(deleted), len(runs) - len(deleted), len(runs),
+        )
+        return deleted
 
     # ------------------------------------------------------------------ #
     #  Task instances                                                      #
@@ -439,6 +524,19 @@ class AirflowClient:
         with allure.step(f"Create connection '{connection_id}'"):
             resp = await self._api.connections.create(body)
         logger.info("Created connection '%s' (conn_type=%s)", connection_id, conn_type)
+        return _parse(resp, ConnectionResponse)
+
+    async def create_connection_from_dict(self, payload: dict) -> ConnectionResponse:
+        """POST /connections — создать соединение из готового JSON (словаря).
+
+        Тело уходит как есть; ключи — как в REST API (``connection_id``,
+        ``conn_type``, ``host``, ``login``, ``schema``, ``port``, ``password``,
+        ``extra``). Удобно, когда набор параметров уже собран словарём.
+        """
+        conn_id = payload.get("connection_id")
+        with allure.step(f"Create connection '{conn_id}'"):
+            resp = await self._api.connections.create(payload)
+        logger.info("Created connection '%s' (conn_type=%s)", conn_id, payload.get("conn_type"))
         return _parse(resp, ConnectionResponse)
 
     async def get_connection(self, connection_id: str) -> ConnectionResponse:

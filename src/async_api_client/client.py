@@ -32,6 +32,7 @@ from .endpoints.v1 import (
     ConnectionsEndpoint as ConnectionsEndpointV1,
     VariablesEndpoint as VariablesEndpointV1,
     PoolsEndpoint as PoolsEndpointV1,
+    MonitorEndpoint as MonitorEndpointV1,
 )
 
 
@@ -90,6 +91,7 @@ class AsyncAPIClient:
         "connections": ConnectionsEndpointV1,
         "variables": VariablesEndpointV1,
         "pools": PoolsEndpointV1,
+        "monitor": MonitorEndpointV1,
     }
     # Дефолтный набор (используется при version="v2").
     ENDPOINTS = ENDPOINTS_V2

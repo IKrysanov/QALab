@@ -49,7 +49,7 @@ class DagsEndpoint(BaseEndpoint):
             "tag_name_pattern": tag_name_pattern,
         }.items() if v is not None}
         return await self._http.get(
-            f"{BASE}/dagTags",
+            "/dagTags",
             params=params or None,
             expected_status=expected_status,
             response_model=DagTagCollectionResponse if expected_status == HTTPStatus.OK else None,
@@ -216,7 +216,7 @@ class DagsEndpoint(BaseEndpoint):
         """GET /api/v2/dagStats."""
         params = {"dag_ids": dag_ids} if dag_ids else None
         return await self._http.get(
-            f"{BASE}/dagStats",
+            "/dagStats",
             params=params,
             expected_status=expected_status,
             response_model=DagStatsCollectionResponse if expected_status == HTTPStatus.OK else None,
@@ -235,7 +235,7 @@ class DagsEndpoint(BaseEndpoint):
         """GET /api/v2/dagSources/{dag_id}."""
         params = {"version_number": version_number} if version_number else None
         return await self._http.get(
-            f"{BASE}/dagSources/{dag_id}",
+            f"/dagSources/{dag_id}",
             params=params,
             expected_status=expected_status,
             response_model=DAGSourceResponse if expected_status == HTTPStatus.OK else None,
@@ -303,7 +303,7 @@ class DagsEndpoint(BaseEndpoint):
             "order_by": order_by,
         }.items() if v is not None}
         return await self._http.get(
-            f"{BASE}/dagWarnings",
+            "/dagWarnings",
             params=params or None,
             expected_status=expected_status,
             response_model=DAGWarningCollectionResponse if expected_status == HTTPStatus.OK else None,
@@ -320,7 +320,7 @@ class DagsEndpoint(BaseEndpoint):
     ) -> Response:
         """PUT /api/v2/parseDagFile/{file_token} — перепарсить файл DAG."""
         return await self._http.put(
-            f"{BASE}/parseDagFile/{file_token}",
+            f"/parseDagFile/{file_token}",
             expected_status=expected_status,
         )
 

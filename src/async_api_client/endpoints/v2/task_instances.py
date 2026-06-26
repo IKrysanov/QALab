@@ -254,7 +254,7 @@ class TaskInstancesEndpoint(BaseEndpoint):
     ) -> Response:
         """POST /api/v2/dags/{dag_id}/clearTaskInstances."""
         return await self._http.post(
-            f"{BASE}/dags/{dag_id}/clearTaskInstances",
+            f"/dags/{dag_id}/clearTaskInstances",
             json=payload,
             expected_status=expected_status,
             **kwargs,
@@ -521,7 +521,7 @@ class TaskInstancesEndpoint(BaseEndpoint):
             "order_by": order_by,
         }.items() if v is not None}
         return await self._http.get(
-            f"{BASE}/dags/{dag_id}/dagRuns/{dag_run_id}/hitlDetails",
+            f"/dags/{dag_id}/dagRuns/{dag_run_id}/hitlDetails",
             params=params or None,
             expected_status=expected_status,
             response_model=HITLDetailCollection if expected_status == HTTPStatus.OK else None,

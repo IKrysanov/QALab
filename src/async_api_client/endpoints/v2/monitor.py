@@ -32,7 +32,7 @@ class MonitorEndpoint(BaseEndpoint):
     ) -> Response:
         """GET /api/v2/version — версия Airflow."""
         return await self._http.get(
-            f"{BASE}/version",
+            "/version",
             expected_status=expected_status,
             response_model=VersionInfo if expected_status == HTTPStatus.OK else None,
         )
@@ -45,7 +45,7 @@ class MonitorEndpoint(BaseEndpoint):
         """GET /api/v2/config — конфигурация Airflow (требует admin прав)."""
         params = {"section": section} if section else None
         return await self._http.get(
-            f"{BASE}/config",
+            "/config",
             params=params,
             expected_status=expected_status,
             response_model=Config if expected_status == HTTPStatus.OK else None,
@@ -59,7 +59,7 @@ class MonitorEndpoint(BaseEndpoint):
     ) -> Response:
         """GET /api/v2/config/section/{section}/option/{option}."""
         return await self._http.get(
-            f"{BASE}/config/section/{section}/option/{option}",
+            f"/config/section/{section}/option/{option}",
             expected_status=expected_status,
         )
 
@@ -71,7 +71,7 @@ class MonitorEndpoint(BaseEndpoint):
         """GET /api/v2/auth/login."""
         params = {"next": next_url} if next_url else None
         return await self._http.get(
-            f"{BASE}/auth/login",
+            f"/auth/login",
             params=params,
             expected_status=expected_status,
         )
@@ -82,6 +82,6 @@ class MonitorEndpoint(BaseEndpoint):
     ) -> Response:
         """GET /api/v2/auth/logout."""
         return await self._http.get(
-            f"{BASE}/auth/logout",
+            "/auth/logout",
             expected_status=expected_status,
         )

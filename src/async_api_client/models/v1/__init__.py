@@ -57,6 +57,14 @@ from .pools import (
     PoolCollectionResponse,
     PoolBody,
 )
+from .monitor import (
+    HealthInfoResponse,
+    VersionInfo,
+    MetadatabaseStatus,
+    SchedulerStatus,
+    TriggererStatus,
+    DagProcessorStatus,
+)
 
 __all__ = [
     # DAGs
@@ -81,4 +89,7 @@ __all__ = [
     "VariableResponse", "VariableCollectionItem", "VariableCollectionResponse", "VariableBody",
     # Pools
     "PoolResponse", "PoolCollectionResponse", "PoolBody",
+    # Monitor (health / version)
+    "HealthInfoResponse", "VersionInfo",
+    "MetadatabaseStatus", "SchedulerStatus", "TriggererStatus", "DagProcessorStatus",
 ]

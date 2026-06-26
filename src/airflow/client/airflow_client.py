@@ -61,6 +61,10 @@ from src.async_api_client.models.v1.pools import (
     PoolCollectionResponse,
     PoolResponse,
 )
+from src.async_api_client.models.v1.monitor import (
+    HealthInfoResponse,
+    VersionInfo,
+)
 
 from .exceptions import AirflowClientError, WaitTimeoutError
 from .states import TERMINAL_DAG_RUN_STATES, TERMINAL_TASK_INSTANCE_STATES
@@ -699,6 +703,20 @@ class AirflowClient:
         """DELETE /pools/{pool_name}."""
         await self._api.pools.delete(name)
         logger.info("Deleted pool '%s'", name)
+
+    # ------------------------------------------------------------------ #
+    #  Monitoring (health / version)                                       #
+    # ------------------------------------------------------------------ #
+
+    async def get_health(self) -> HealthInfoResponse:
+        """GET /health — состояние компонентов Airflow (metadatabase/scheduler/...)."""
+        resp = await self._api.monitor.health()
+        return _parse(resp, HealthInfoResponse)
+
+    async def get_version(self) -> VersionInfo:
+        """GET /version — версия Airflow."""
+        resp = await self._api.monitor.version()
+        return _parse(resp, VersionInfo)
 
     # ------------------------------------------------------------------ #
     #  Polling primitive                                                   #

@@ -21,7 +21,16 @@ from typing import Optional, Union
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOGS_DIR = PROJECT_ROOT / "logs"
 
-MANAGED_LOGGERS = ("async_api_client", "airflow.client", "infra.health", "tests", "app", "httpx", "httpcore")
+MANAGED_LOGGERS = (
+    "async_api_client",
+    "airflow.client",
+    "infra.health",
+    "s3.client",
+    "tests",
+    "app",
+    "httpx",
+    "httpcore",
+)
 
 _DEFAULT_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _DEFAULT_DATEFMT = "%Y-%m-%d %H:%M:%S"

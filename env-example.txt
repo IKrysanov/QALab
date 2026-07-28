@@ -1,12 +1,42 @@
-BASE_URL=
-PORT=
-CERTIFICATE_PATH=
-VERIFY_SSL_CERTIFICATE=
+API_BASE_URL=jsonplaceholder.typicode.com
 
-API_KEY=
+# pytest-triage: PYTEST_ADDOPTS экспортируется runner до запуска pytest;
+# ConfigEnv не успеет применить это значение из .env.
+# PYTEST_ADDOPTS="--ai-triage=on --ai-provider=openai"
+# OPENAI_API_KEY=
+# OPENAI_MODEL=
+# OPENAI_BASE_URL=
+# OPENAI_ORG_ID=
+#
+# PYTEST_ADDOPTS="--ai-triage=on --ai-provider=anthropic"
+# ANTHROPIC_API_KEY=
+# ANTHROPIC_AUTH_TOKEN=
+# ANTHROPIC_MODEL=
+# ANTHROPIC_BASE_URL=
+#
+# PYTEST_ADDOPTS="--ai-triage=on --ai-provider=gigachat"
+# GIGACHAT_CREDENTIALS=
+# GIGACHAT_SCOPE=
+# GIGACHAT_MODEL=
+# GIGACHAT_CA_BUNDLE_FILE=
+# GIGACHAT_ACCESS_TOKEN=
 
-USERNAME_USER=
-PASSWORD_USER=
+# Kerberos (нужны только для health-check с kerberos=True)
+KRB_PRINCIPAL=
+KRB_PASSWORD=
 
-USERNAME_ADMIN=
-PASSWORD_ADMIN=
+# S3
+S3_BUCKET_NAME=
+S3_ENDPOINT_URL=
+# AWS_REGION=
+# AWS_DEFAULT_REGION=
+# AWS_ACCESS_KEY_ID=
+# AWS_SECRET_ACCESS_KEY=
+# AWS_SESSION_TOKEN=
+# AWS_PROFILE=
+# S3_VERIFY_SSL=true
+# AWS_CA_BUNDLE=
+# S3_ADDRESSING_STYLE=auto
+# S3_CONNECT_TIMEOUT=5
+# S3_READ_TIMEOUT=30
+# S3_MAX_ATTEMPTS=3

@@ -1,3 +1,5 @@
+from typing import Optional
+
 import allure
 import httpx
 import pytest
@@ -12,6 +14,14 @@ from utils.logger import configure_logging
 from utils.environment import ConfigEnv
 
 config_env = ConfigEnv()
+
+
+def _optional_env(name: str) -> Optional[str]:
+    value = config_env.get(name)
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
 
 
 def pytest_addoption(parser):
@@ -102,3 +112,61 @@ def health_client() -> DataSystemHealthClient:
         client.kinit(principal, password)
 
     return client
+
+
+@pytest.fixture(scope="session")
+def s3_config():
+    """Собрать явный S3Config из общего ConfigEnv."""
+
+    from src.s3 import S3Config
+
+    bucket_name = config_env.get("S3_BUCKET_NAME", required=True)
+    verify_ssl = (
+        config_env.get_bool("S3_VERIFY_SSL")
+        if _optional_env("S3_VERIFY_SSL") is not None
+        else None
+    )
+    connect_timeout = config_env.get_float(
+        "S3_CONNECT_TIMEOUT",
+        default=5.0,
+    )
+    read_timeout = config_env.get_float(
+        "S3_READ_TIMEOUT",
+        default=30.0,
+    )
+    max_attempts = config_env.get_int(
+        "S3_MAX_ATTEMPTS",
+        default=3,
+    )
+
+    return S3Config(
+        bucket_name=bucket_name or "",
+        endpoint_url=_optional_env("S3_ENDPOINT_URL"),
+        region_name=(
+            _optional_env("AWS_REGION")
+            or _optional_env("AWS_DEFAULT_REGION")
+        ),
+        aws_access_key_id=_optional_env("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=_optional_env("AWS_SECRET_ACCESS_KEY"),
+        aws_session_token=_optional_env("AWS_SESSION_TOKEN"),
+        profile_name=_optional_env("AWS_PROFILE"),
+        verify_ssl=verify_ssl,
+        addressing_style=_optional_env("S3_ADDRESSING_STYLE") or "auto",
+        connect_timeout=(
+            connect_timeout if connect_timeout is not None else 5.0
+        ),
+        read_timeout=read_timeout if read_timeout is not None else 30.0,
+        max_attempts=max_attempts if max_attempts is not None else 3,
+    )
+
+
+@pytest.fixture
+@allure.title("Create S3 client")
+def s3_client(s3_config):
+    """Изолированный S3-клиент с гарантированным закрытием после теста."""
+
+    # Локальный импорт не запускает настройку S3-логгера раньше pytest_configure.
+    from src.s3 import S3Client
+
+    with S3Client(s3_config) as client:
+        yield client

@@ -19,6 +19,31 @@ class S3ClientClosedError(S3ClientError):
     """Операция вызвана после закрытия S3-клиента."""
 
 
+class S3ObjectTooLargeError(S3ClientError):
+    """Объект превышает установленный предел загрузки в память."""
+
+    def __init__(
+            self,
+            bucket: str,
+            object_key: str,
+            max_size: int,
+            *,
+            actual_size: Optional[int] = None,
+    ) -> None:
+        self.bucket = bucket
+        self.object_key = object_key
+        self.max_size = max_size
+        self.actual_size = actual_size
+
+        message = (
+            "S3 object exceeds in-memory download limit: "
+            f"target='s3://{bucket}/{object_key}', max_size={max_size}"
+        )
+        if actual_size is not None:
+            message = f"{message}, actual_size={actual_size}"
+        super().__init__(message)
+
+
 class S3OperationError(S3ClientError):
     """Ошибка операции в S3 с безопасным контекстом без учётных данных."""
 

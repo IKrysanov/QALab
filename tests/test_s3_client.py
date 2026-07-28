@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from io import BytesIO
 
 import pytest
@@ -7,6 +8,7 @@ from src.s3 import (
     S3ClientClosedError,
     S3Config,
     S3ConfigurationError,
+    S3ObjectTooLargeError,
     S3OperationError,
 )
 
@@ -27,6 +29,10 @@ class FakeS3Service:
         self.calls = []
         self.pages = []
         self.body = BytesIO(b"stored data")
+        self.get_response = {}
+        self.put_response = {}
+        self.delete_response = {}
+        self.head_response = {}
         self.head_error = None
         self.close_calls = 0
         self.close_error = None
@@ -39,21 +45,21 @@ class FakeS3Service:
 
     def put_object(self, **kwargs):
         self.calls.append(("put_object", kwargs))
-        return {}
+        return self.put_response
 
     def get_object(self, **kwargs):
         self.calls.append(("get_object", kwargs))
-        return {"Body": self.body}
+        return {"Body": self.body, **self.get_response}
 
     def delete_object(self, **kwargs):
         self.calls.append(("delete_object", kwargs))
-        return {}
+        return self.delete_response
 
     def head_object(self, **kwargs):
         self.calls.append(("head_object", kwargs))
         if self.head_error:
             raise self.head_error
-        return {}
+        return self.head_response
 
     def list_objects_v2(self, **kwargs):
         self.calls.append(("list_objects_v2", kwargs))
@@ -213,7 +219,14 @@ def test_context_manager_preserves_test_error_if_close_fails(service):
 
 
 def test_upload_bytes_builds_boto3_request(client, service):
-    client.upload_bytes(
+    service.put_response = {
+        "ETag": '"etag-42"',
+        "VersionId": "version-42",
+        "ChecksumSHA256": "sha256-42",
+        "ResponseMetadata": {"RequestId": "request-42"},
+    }
+
+    result = client.upload_bytes(
         data=b"payload",
         object_key="reports/result.json",
         content_type="application/json",
@@ -230,6 +243,11 @@ def test_upload_bytes_builds_boto3_request(client, service):
             "Metadata": {"run": "42"},
         },
     )]
+    assert result.object_key == "reports/result.json"
+    assert result.etag == '"etag-42"'
+    assert result.version_id == "version-42"
+    assert result.checksums == {"SHA256": "sha256-42"}
+    assert result.request_id == "request-42"
 
 
 def test_upload_file_validates_source(client, tmp_path):
@@ -243,6 +261,46 @@ def test_upload_file_validates_source(client, tmp_path):
 def test_download_bytes_closes_stream(client, service):
     assert client.download_bytes("stored.txt") == b"stored data"
     assert service.body.closed
+
+
+def test_download_bytes_passes_version_id(client, service):
+    assert (
+        client.download_bytes("stored.txt", version_id="version-42")
+        == b"stored data"
+    )
+    assert service.calls[-1] == (
+        "get_object",
+        {
+            "Bucket": "qa-bucket",
+            "Key": "stored.txt",
+            "VersionId": "version-42",
+        },
+    )
+
+
+def test_download_bytes_rejects_known_oversized_object(client, service):
+    service.get_response = {"ContentLength": 12}
+
+    with pytest.raises(S3ObjectTooLargeError) as error:
+        client.download_bytes("stored.txt", max_size=11)
+
+    assert error.value.max_size == 11
+    assert error.value.actual_size == 12
+    assert service.body.closed
+
+
+def test_download_bytes_enforces_limit_without_content_length(client, service):
+    with pytest.raises(S3ObjectTooLargeError) as error:
+        client.download_bytes("stored.txt", max_size=5)
+
+    assert error.value.actual_size == 6
+    assert service.body.closed
+
+
+@pytest.mark.parametrize("max_size", [-1, 1.5, True])
+def test_download_bytes_rejects_invalid_max_size(client, max_size):
+    with pytest.raises(ValueError, match="max_size"):
+        client.download_bytes("stored.txt", max_size=max_size)
 
 
 def test_download_bytes_preserves_read_error_if_body_close_also_fails(
@@ -281,6 +339,83 @@ def test_download_file_creates_parent_directory(client, service, tmp_path):
             "Bucket": "qa-bucket",
             "Key": "object.bin",
             "Filename": str(destination),
+        },
+    )
+
+
+def test_download_file_passes_extra_args(client, service, tmp_path):
+    destination = tmp_path / "versioned.bin"
+
+    client.download_file(
+        object_key="object.bin",
+        destination_path=destination,
+        extra_args={"VersionId": "version-42"},
+    )
+
+    assert service.calls[-1] == (
+        "download_file",
+        {
+            "Bucket": "qa-bucket",
+            "Key": "object.bin",
+            "Filename": str(destination),
+            "ExtraArgs": {"VersionId": "version-42"},
+        },
+    )
+
+
+def test_head_object_returns_test_relevant_metadata(client, service):
+    modified = datetime(2026, 7, 28, tzinfo=timezone.utc)
+    service.head_response = {
+        "ContentLength": 128,
+        "ETag": '"etag-42"',
+        "VersionId": "version-42",
+        "ContentType": "text/x-python",
+        "LastModified": modified,
+        "Metadata": {"run-id": "run-42"},
+        "ChecksumSHA256": "sha256-42",
+        "ResponseMetadata": {"RequestId": "request-42"},
+    }
+
+    result = client.head_object("dags/test.py", version_id="version-42")
+
+    assert result.object_key == "dags/test.py"
+    assert result.size_bytes == 128
+    assert result.etag == '"etag-42"'
+    assert result.version_id == "version-42"
+    assert result.content_type == "text/x-python"
+    assert result.last_modified == modified
+    assert result.metadata == {"run-id": "run-42"}
+    assert result.checksums == {"SHA256": "sha256-42"}
+    assert result.request_id == "request-42"
+    assert service.calls[-1] == (
+        "head_object",
+        {
+            "Bucket": "qa-bucket",
+            "Key": "dags/test.py",
+            "VersionId": "version-42",
+        },
+    )
+
+
+def test_delete_object_supports_versioned_cleanup(client, service):
+    service.delete_response = {
+        "DeleteMarker": False,
+        "VersionId": "version-42",
+        "ResponseMetadata": {"RequestId": "request-42"},
+    }
+
+    result = client.delete_object("dags/test.py", version_id="version-42")
+
+    assert result.object_key == "dags/test.py"
+    assert result.version_id == "version-42"
+    assert result.delete_marker is False
+    assert result.request_id == "request-42"
+    assert service.calls[-1] == (
+        "delete_object",
+        {
+            "Bucket": "qa-bucket",
+            "Key": "dags/test.py",
+            "VersionId": "version-42",
         },
     )
 
@@ -366,6 +501,15 @@ def test_list_keys_rejects_invalid_limit(client, limit):
 def test_object_operations_reject_empty_key(client):
     with pytest.raises(ValueError, match="must not be empty"):
         client.object_exists("")
+
+
+@pytest.mark.parametrize("version_id", ["", 42])
+def test_object_operations_reject_invalid_version_id(
+        client,
+        version_id,
+):
+    with pytest.raises(ValueError, match="version_id"):
+        client.delete_object("object.txt", version_id=version_id)
 
 
 def test_generate_presigned_url(client, service):

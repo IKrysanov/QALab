@@ -58,7 +58,11 @@ def test_upload_and_download_bytes_match_boto3_contract(
     with Stubber(boto_service) as stubber:
         stubber.add_response(
             "put_object",
-            {},
+            {
+                "ETag": '"etag-42"',
+                "VersionId": "version-42",
+                "ChecksumSHA256": "sha256-42",
+            },
             {
                 "Bucket": "qa-bucket",
                 "Key": "reports/result.json",
@@ -74,21 +78,31 @@ def test_upload_and_download_bytes_match_boto3_contract(
                     BytesIO(b'{"ok": true}'),
                     content_length=12,
                 ),
+                "ContentLength": 12,
+                "VersionId": "version-42",
             },
             {
                 "Bucket": "qa-bucket",
                 "Key": "reports/result.json",
+                "VersionId": "version-42",
             },
         )
 
-        boto_client.upload_bytes(
+        uploaded = boto_client.upload_bytes(
             b'{"ok": true}',
             "reports/result.json",
             content_type="application/json",
             metadata={"run": "42"},
         )
-        payload = boto_client.download_bytes("reports/result.json")
+        payload = boto_client.download_bytes(
+            "reports/result.json",
+            version_id="version-42",
+            max_size=1024,
+        )
 
+    assert uploaded.etag == '"etag-42"'
+    assert uploaded.version_id == "version-42"
+    assert uploaded.checksums == {"SHA256": "sha256-42"}
     assert payload == b'{"ok": true}'
 
 
@@ -109,15 +123,59 @@ def test_not_found_and_delete_match_boto3_contract(
         )
         stubber.add_response(
             "delete_object",
-            {},
+            {
+                "DeleteMarker": False,
+                "VersionId": "version-42",
+            },
             {
                 "Bucket": "qa-bucket",
                 "Key": "old.txt",
+                "VersionId": "version-42",
             },
         )
 
         assert boto_client.object_exists("missing.txt") is False
-        boto_client.delete_object("old.txt")
+        deleted = boto_client.delete_object(
+            "old.txt",
+            version_id="version-42",
+        )
+
+    assert deleted.delete_marker is False
+    assert deleted.version_id == "version-42"
+
+
+def test_head_object_metadata_matches_boto3_contract(
+        boto_client,
+        boto_service,
+):
+    with Stubber(boto_service) as stubber:
+        stubber.add_response(
+            "head_object",
+            {
+                "ContentLength": 42,
+                "ETag": '"etag-42"',
+                "VersionId": "version-42",
+                "ContentType": "text/x-python",
+                "Metadata": {"run-id": "run-42"},
+                "ChecksumSHA256": "sha256-42",
+            },
+            {
+                "Bucket": "qa-bucket",
+                "Key": "dags/test.py",
+                "VersionId": "version-42",
+            },
+        )
+
+        metadata = boto_client.head_object(
+            "dags/test.py",
+            version_id="version-42",
+        )
+
+    assert metadata.size_bytes == 42
+    assert metadata.etag == '"etag-42"'
+    assert metadata.version_id == "version-42"
+    assert metadata.metadata == {"run-id": "run-42"}
+    assert metadata.checksums == {"SHA256": "sha256-42"}
 
 
 def test_list_keys_paginates_real_botocore_responses(

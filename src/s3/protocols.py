@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping, Optional, Protocol
 
 from .config import S3Config
 
@@ -23,7 +23,13 @@ class S3Service(Protocol):
     ) -> Any:
         ...
 
-    def download_file(self, Bucket: str, Key: str, Filename: str) -> Any:
+    def download_file(
+            self,
+            Bucket: str,
+            Key: str,
+            Filename: str,
+            ExtraArgs: Optional[Mapping[str, Any]] = None,
+    ) -> Any:
         ...
 
     def put_object(self, **kwargs: Any) -> Mapping[str, Any]:

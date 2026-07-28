@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Mapping, NoReturn, Optional, Union
@@ -10,12 +11,25 @@ from utils.logger import get_logger
 
 from .boto3_factory import Boto3S3ServiceFactory
 from .config import S3Config
-from .exceptions import S3ClientClosedError, S3OperationError
+from .exceptions import (
+    S3ClientClosedError,
+    S3ObjectTooLargeError,
+    S3OperationError,
+)
+from .models import S3DeleteResult, S3ObjectMetadata, S3UploadResult
 from .protocols import S3Service, S3ServiceFactory
 
 PathLike = Union[str, Path]
 
 logger = get_logger("s3.client")
+
+_CHECKSUM_FIELDS = {
+    "CRC32": "ChecksumCRC32",
+    "CRC32C": "ChecksumCRC32C",
+    "CRC64NVME": "ChecksumCRC64NVME",
+    "SHA1": "ChecksumSHA1",
+    "SHA256": "ChecksumSHA256",
+}
 
 
 class S3Client:
@@ -125,7 +139,7 @@ class S3Client:
             content_type: Optional[str] = None,
             metadata: Optional[Mapping[str, str]] = None,
             extra_args: Optional[Mapping[str, Any]] = None,
-    ) -> None:
+    ) -> S3UploadResult:
         """Загрузить байты по ``object_key`` внутри текущего bucket."""
 
         self._ensure_open()
@@ -142,15 +156,24 @@ class S3Client:
             request["Metadata"] = dict(metadata)
 
         try:
-            self._service.put_object(**request)
+            response = self._service.put_object(**request)
         except Exception as exc:
             self._raise_operation_error("put_object", object_key, exc)
         self._log_success("put_object", object_key, size_bytes=len(data))
+        return S3UploadResult(
+            object_key=object_key,
+            etag=self._optional_string(response.get("ETag")),
+            version_id=self._optional_string(response.get("VersionId")),
+            checksums=self._extract_checksums(response),
+            request_id=self._response_request_id(response),
+        )
 
     def download_file(
             self,
             object_key: str,
             destination_path: PathLike,
+            *,
+            extra_args: Optional[Mapping[str, Any]] = None,
     ) -> Path:
         """Скачать объект в файл, создав отсутствующие родительские каталоги."""
 
@@ -158,33 +181,77 @@ class S3Client:
         self._validate_object_key(object_key)
         destination = Path(destination_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
+        request: dict[str, Any] = {
+            "Bucket": self.bucket_name,
+            "Key": object_key,
+            "Filename": str(destination),
+        }
+        if extra_args is not None:
+            request["ExtraArgs"] = dict(extra_args)
+
         try:
-            self._service.download_file(
-                Bucket=self.bucket_name,
-                Key=object_key,
-                Filename=str(destination),
-            )
+            self._service.download_file(**request)
         except Exception as exc:
             self._raise_operation_error("download_file", object_key, exc)
         self._log_success("download_file", object_key)
         return destination
 
-    def download_bytes(self, object_key: str) -> bytes:
-        """Скачать объект в память."""
+    def download_bytes(
+            self,
+            object_key: str,
+            *,
+            version_id: Optional[str] = None,
+            max_size: Optional[int] = None,
+    ) -> bytes:
+        """Скачать объект в память с опциональным ограничением размера."""
 
         self._ensure_open()
         self._validate_object_key(object_key)
+        self._validate_version_id(version_id)
+        self._validate_max_size(max_size)
+
+        request: dict[str, Any] = {
+            "Bucket": self.bucket_name,
+            "Key": object_key,
+        }
+        if version_id is not None:
+            request["VersionId"] = version_id
+
         body = None
         operation_error: Optional[Exception] = None
+        size_error: Optional[S3ObjectTooLargeError] = None
         close_error: Optional[Exception] = None
         data: Optional[bytes] = None
         try:
-            response = self._service.get_object(
-                Bucket=self.bucket_name,
-                Key=object_key,
-            )
+            response = self._service.get_object(**request)
             body = response["Body"]
-            data = body.read()
+            content_length = response.get("ContentLength")
+            known_size = (
+                content_length
+                if isinstance(content_length, int)
+                and not isinstance(content_length, bool)
+                and content_length >= 0
+                else None
+            )
+            if (
+                    max_size is not None
+                    and known_size is not None
+                    and known_size > max_size
+            ):
+                size_error = S3ObjectTooLargeError(
+                    self.bucket_name,
+                    object_key,
+                    max_size,
+                    actual_size=known_size,
+                )
+            else:
+                data = self._read_body(
+                    body,
+                    object_key=object_key,
+                    max_size=max_size,
+                )
+        except S3ObjectTooLargeError as exc:
+            size_error = exc
         except Exception as exc:
             operation_error = exc
 
@@ -202,6 +269,8 @@ class S3Client:
                 object_key,
                 operation_error,
             )
+        if size_error is not None:
+            raise size_error
         if close_error is not None:
             self._raise_operation_error(
                 "close_object_body",
@@ -217,30 +286,114 @@ class S3Client:
         self._log_success("get_object", object_key, size_bytes=len(data))
         return data
 
-    def delete_object(self, object_key: str) -> None:
-        """Удалить объект."""
+    def delete_object(
+            self,
+            object_key: str,
+            *,
+            version_id: Optional[str] = None,
+    ) -> S3DeleteResult:
+        """Удалить объект или его конкретную версию."""
 
         self._ensure_open()
         self._validate_object_key(object_key)
+        self._validate_version_id(version_id)
+        request: dict[str, Any] = {
+            "Bucket": self.bucket_name,
+            "Key": object_key,
+        }
+        if version_id is not None:
+            request["VersionId"] = version_id
+
         try:
-            self._service.delete_object(
-                Bucket=self.bucket_name,
-                Key=object_key,
-            )
+            response = self._service.delete_object(**request)
         except Exception as exc:
             self._raise_operation_error("delete_object", object_key, exc)
         self._log_success("delete_object", object_key)
+        delete_marker = response.get("DeleteMarker")
+        return S3DeleteResult(
+            object_key=object_key,
+            version_id=self._optional_string(response.get("VersionId")),
+            delete_marker=(
+                delete_marker if isinstance(delete_marker, bool) else None
+            ),
+            request_id=self._response_request_id(response),
+        )
 
-    def object_exists(self, object_key: str) -> bool:
+    def head_object(
+            self,
+            object_key: str,
+            *,
+            version_id: Optional[str] = None,
+    ) -> S3ObjectMetadata:
+        """Получить метаданные объекта без скачивания содержимого."""
+
+        self._ensure_open()
+        self._validate_object_key(object_key)
+        self._validate_version_id(version_id)
+        request: dict[str, Any] = {
+            "Bucket": self.bucket_name,
+            "Key": object_key,
+        }
+        if version_id is not None:
+            request["VersionId"] = version_id
+
+        try:
+            response = self._service.head_object(**request)
+        except Exception as exc:
+            self._raise_operation_error("head_object", object_key, exc)
+
+        raw_metadata = response.get("Metadata", {})
+        metadata = (
+            {
+                str(key): str(value)
+                for key, value in raw_metadata.items()
+            }
+            if isinstance(raw_metadata, Mapping)
+            else {}
+        )
+        raw_size = response.get("ContentLength")
+        raw_last_modified = response.get("LastModified")
+        return S3ObjectMetadata(
+            object_key=object_key,
+            size_bytes=(
+                raw_size
+                if isinstance(raw_size, int)
+                and not isinstance(raw_size, bool)
+                else None
+            ),
+            etag=self._optional_string(response.get("ETag")),
+            version_id=self._optional_string(response.get("VersionId")),
+            content_type=self._optional_string(response.get("ContentType")),
+            last_modified=(
+                raw_last_modified
+                if isinstance(raw_last_modified, datetime)
+                else None
+            ),
+            metadata=metadata,
+            checksums=self._extract_checksums(response),
+            request_id=self._response_request_id(response),
+        )
+
+    def object_exists(
+            self,
+            object_key: str,
+            *,
+            version_id: Optional[str] = None,
+    ) -> bool:
         """Проверить существование объекта без скачивания его содержимого."""
 
         self._ensure_open()
         self._validate_object_key(object_key)
+        self._validate_version_id(version_id)
+        request: dict[str, Any] = {
+            "Bucket": self.bucket_name,
+            "Key": object_key,
+        }
+        if version_id is not None:
+            request["VersionId"] = version_id
+
         try:
-            self._service.head_object(
-                Bucket=self.bucket_name,
-                Key=object_key,
-            )
+            self._service.head_object(**request)
             return True
         except Exception as exc:
             if self._is_not_found(exc):
@@ -412,8 +565,57 @@ class S3Client:
 
     @staticmethod
     def _validate_object_key(object_key: str) -> None:
-        if not object_key:
+        if not isinstance(object_key, str) or not object_key:
             raise ValueError("S3 object key must not be empty")
+
+    @staticmethod
+    def _validate_version_id(version_id: Optional[str]) -> None:
+        if version_id is not None and (
+                not isinstance(version_id, str)
+                or not version_id
+        ):
+            raise ValueError("version_id must not be empty")
+
+    @staticmethod
+    def _validate_max_size(max_size: Optional[int]) -> None:
+        if max_size is not None and (
+                isinstance(max_size, bool)
+                or not isinstance(max_size, int)
+                or max_size < 0
+        ):
+            raise ValueError("max_size must be a non-negative integer")
+
+    def _read_body(
+            self,
+            body: Any,
+            *,
+            object_key: str,
+            max_size: Optional[int],
+    ) -> bytes:
+        if max_size is None:
+            return body.read()
+
+        chunks: list[bytes] = []
+        total_size = 0
+        while True:
+            remaining_with_sentinel = max_size - total_size + 1
+            chunk = body.read(min(1024 * 1024, remaining_with_sentinel))
+            if not chunk:
+                return b"".join(chunks)
+            if not isinstance(chunk, bytes):
+                raise TypeError(
+                    "S3 response body must return bytes, "
+                    f"got {type(chunk).__name__}"
+                )
+            chunks.append(chunk)
+            total_size += len(chunk)
+            if total_size > max_size:
+                raise S3ObjectTooLargeError(
+                    self.bucket_name,
+                    object_key,
+                    max_size,
+                    actual_size=total_size,
+                )
 
     def _target(self, object_key: Optional[str]) -> str:
         target = f"s3://{self.bucket_name}"
@@ -450,3 +652,26 @@ class S3Client:
             http_status if isinstance(http_status, int) else None,
             str(request_id) if request_id is not None else None,
         )
+
+    @staticmethod
+    def _optional_string(value: Any) -> Optional[str]:
+        return str(value) if value is not None else None
+
+    @classmethod
+    def _extract_checksums(
+            cls,
+            response: Mapping[str, Any],
+    ) -> dict[str, str]:
+        return {
+            name: str(response[field])
+            for name, field in _CHECKSUM_FIELDS.items()
+            if response.get(field) is not None
+        }
+
+    @staticmethod
+    def _response_request_id(response: Mapping[str, Any]) -> Optional[str]:
+        metadata = response.get("ResponseMetadata", {})
+        if not isinstance(metadata, Mapping):
+            return None
+        request_id = metadata.get("RequestId")
+        return str(request_id) if request_id is not None else None

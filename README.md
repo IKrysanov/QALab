@@ -124,14 +124,23 @@ config = S3Config(
 )
 
 with S3Client(config) as client:
-    client.upload_bytes(
+    uploaded = client.upload_bytes(
         data=b"report",
         object_key="runs/42/report.txt",
         content_type="text/plain",
+        metadata={"qa-run-id": "42"},
     )
-    assert client.object_exists(object_key="runs/42/report.txt")
+    stored = client.head_object(
+        object_key="runs/42/report.txt",
+        version_id=uploaded.version_id,
+    )
+    assert stored.metadata["qa-run-id"] == "42"
 
-    payload = client.download_bytes(object_key="runs/42/report.txt")
+    payload = client.download_bytes(
+        object_key="runs/42/report.txt",
+        version_id=stored.version_id,
+        max_size=1024,
+    )
     keys = client.list_keys(prefix="runs/42/")
     url = client.generate_presigned_url(
         object_key="runs/42/report.txt",
@@ -143,6 +152,14 @@ with S3Client(config) as client:
 `runs/42/report.txt` часть `runs/42/` является prefix, а `report.txt` — именем.
 В boto3 upload/download это единое поле `Key`; отдельный параметр `Prefix`
 используется только при list-операциях.
+
+`head_object()` возвращает типизированные метаданные, необходимые
+интеграционным тестам: размер, `ETag`, `VersionId`, `ContentType`,
+пользовательскую metadata, checksum, время изменения и request ID.
+`upload_bytes()` и `delete_object()` также возвращают типизированные результаты.
+Параметр `max_size` у `download_bytes()` ограничивает потребление памяти
+pytest-worker. Для больших объектов следует использовать `download_file()`;
+через его `extra_args` можно передать, например, `VersionId`.
 
 В корневом `conftest.py` уже есть function-scoped fixture `s3_client` с таким
 lifecycle; неизменяемый `s3_config` имеет session scope:
@@ -170,6 +187,11 @@ def isolated_s3_client(s3_config):
 фабрикой; внедрённый через `service=` fake или общий транспорт остаётся во
 владении вызывающего кода. После выхода из контекста объект `S3Client` больше не
 принимает операции.
+
+Контекстный менеджер не удаляет объекты. Уникальные имена DAG, учёт созданных
+ключей и политика cleanup относятся к pytest-фикстурам конкретного сценария.
+Для versioned bucket fixture может передать сохранённый `VersionId` в
+`delete_object()`, чтобы удалить именно созданную тестом версию.
 
 `S3Client` принимает внедряемые `S3Service` или `S3ServiceFactory`, поэтому
 unit-тесты могут подменять boto3 без сети и реального bucket. Ошибки и логи

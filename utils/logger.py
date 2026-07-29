@@ -12,11 +12,13 @@
     log.info("hello")
 """
 
+import json
 import logging
 import sys
+from datetime import datetime, timezone
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from typing import Optional, Union
+from typing import Any, Mapping, Optional, Union
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOGS_DIR = PROJECT_ROOT / "logs"
@@ -26,6 +28,7 @@ MANAGED_LOGGERS = (
     "airflow.client",
     "infra.health",
     "s3.client",
+    "openshift.client",
     "tests",
     "app",
     "httpx",
@@ -34,10 +37,70 @@ MANAGED_LOGGERS = (
 
 _DEFAULT_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _DEFAULT_DATEFMT = "%Y-%m-%d %H:%M:%S"
+_JSON_LOGGERS = ("openshift.client",)
 
 LogLevel = Union[int, str]
 
 _configured: bool = False
+
+
+class StructuredJsonFormatter(logging.Formatter):
+    """JSON Lines formatter для событий, пригодных для AI/CI-парсинга."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        event_data = getattr(record, "event_data", None)
+        payload: dict[str, Any] = {
+            "timestamp": datetime.fromtimestamp(
+                record.created,
+                tz=timezone.utc,
+            ).isoformat(timespec="milliseconds"),
+            "level": record.levelname,
+            "logger": record.name,
+        }
+        if isinstance(event_data, Mapping):
+            payload.update(
+                {
+                    key: value
+                    for key, value in event_data.items()
+                    if key not in payload
+                }
+            )
+        else:
+            payload["message"] = record.getMessage()
+
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=str,
+        )
+
+
+class RoutingFormatter(logging.Formatter):
+    """Выбирает JSON для структурированных клиентов и text для остальных."""
+
+    def __init__(
+            self,
+            text_format: str,
+            datefmt: str,
+    ) -> None:
+        super().__init__()
+        self._text_formatter = logging.Formatter(
+            text_format,
+            datefmt=datefmt,
+        )
+        self._json_formatter = StructuredJsonFormatter()
+
+    def format(self, record: logging.LogRecord) -> str:
+        if any(
+                record.name == name
+                or record.name.startswith(f"{name}.")
+                for name in _JSON_LOGGERS
+        ):
+            return self._json_formatter.format(record)
+        return self._text_formatter.format(record)
 
 
 def configure_logging(
@@ -66,7 +129,7 @@ def configure_logging(
     if _configured and not force:
         return
 
-    formatter = logging.Formatter(fmt, datefmt=datefmt)
+    formatter = RoutingFormatter(fmt, datefmt)
     handlers: list[logging.Handler] = []
 
     if use_console:
@@ -115,6 +178,22 @@ def get_logger(name: Optional[str] = None) -> logging.Logger:
     if name is None:
         name = "app"
     return logging.getLogger(name)
+
+
+def log_event(
+        logger: logging.Logger,
+        level: int,
+        event: str,
+        **fields: Any,
+) -> None:
+    """Записать структурированное событие без конкатенации key=value."""
+
+    event_data = {"event": event, **fields}
+    logger.log(
+        level,
+        event,
+        extra={"event_data": event_data},
+    )
 
 
 def set_level(level: LogLevel, logger_name: Optional[str] = None) -> None:

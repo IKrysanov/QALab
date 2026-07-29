@@ -1,7 +1,7 @@
 # QALab
 
 Набор клиентов и pytest-инструментов для тестирования REST API, Airflow,
-внешних систем данных и S3-совместимых объектных хранилищ.
+OpenShift, внешних систем данных и S3-совместимых объектных хранилищ.
 
 ## Установка
 
@@ -56,7 +56,7 @@ pipeline и содержит точные pytest-селекторы для пе�
 
 | Переменная | Обязательность | Назначение |
 | --- | --- | --- |
-| `API_BASE_URL` | Обязательна для запуска pytest, если не передан `--base_url` | Хост тестируемого API без схемы, например `jsonplaceholder.typicode.com`. Используется фикстурами `AsyncAPIClient`, `AirflowClient` и Web UI. |
+| `API_BASE_URL` | Обязательна для API/Web UI fixtures, если не передан `--base_url` | Хост тестируемого API без схемы, например `jsonplaceholder.typicode.com`. Используется фикстурами `AsyncAPIClient`, `AirflowClient` и Web UI. |
 
 `APIConfig`, `WebUIConfig`, `AsyncAPIClient` и `AirflowClient` при создании
 напрямую не читают окружение: protocol, port, TLS, заголовки и аутентификация
@@ -73,6 +73,32 @@ pipeline и содержит точные pytest-селекторы для пе�
 обязательных переменных окружения нет: адреса, учётные данные и TLS-настройки
 передаются в соответствующий dataclass. Kerberos-переменные нужны только для
 конфигураций с `kerberos=True`.
+
+### OpenShift / Kubernetes API
+
+| Переменная | Обязательность | Назначение |
+| --- | --- | --- |
+| `OPENSHIFT_NAMESPACE` | Обязательна для fixture `openshift_config` | Project/namespace, в котором клиент выполняет pod-операции. |
+| `OPENSHIFT_AUTH_MODE` | Опциональна, по умолчанию `auto` | Способ загрузки credentials: `auto`, `in_cluster` или `kubeconfig`. |
+| `OPENSHIFT_KUBECONFIG` | Опциональна | Явный путь к kubeconfig для этого клиента. |
+| `KUBECONFIG` | Опциональна | Стандартная переменная Kubernetes SDK. Используется, если `OPENSHIFT_KUBECONFIG` не задана. |
+| `OPENSHIFT_CONTEXT` | Опциональна | Контекст kubeconfig. Без неё используется `current-context`. |
+| `OPENSHIFT_VERIFY_SSL` | Опциональна | Переопределяет проверку TLS из kubeconfig/in-cluster конфигурации. |
+| `OPENSHIFT_CA_CERT` | Опциональна | Путь к CA certificate. Несовместима с `OPENSHIFT_VERIFY_SSL=false`. |
+| `OPENSHIFT_CONNECT_TIMEOUT` | Опциональна, по умолчанию `5` | Таймаут подключения к Kubernetes API в секундах. |
+| `OPENSHIFT_READ_TIMEOUT` | Опциональна, по умолчанию `30` | Таймаут чтения одного ответа Kubernetes API. |
+| `OPENSHIFT_WAIT_TIMEOUT` | Опциональна, по умолчанию `300` | Общий timeout polling-операций. |
+| `OPENSHIFT_POLL_INTERVAL` | Опциональна, по умолчанию `2` | Интервал polling в секундах. |
+| `OPENSHIFT_LOG_LIMIT_BYTES` | Опциональна, по умолчанию `1000000` | Максимальный объём ответа при чтении pod logs. |
+| `OPENSHIFT_EXEC_TIMEOUT` | Опциональна, по умолчанию `60` | Максимальное время выполнения одной команды внутри контейнера. |
+| `OPENSHIFT_EXEC_OUTPUT_LIMIT_BYTES` | Опциональна, по умолчанию `1000000` | Общий лимит `stdout` и `stderr` одной команды в памяти pytest-worker. |
+
+В режиме `auto` явно заданный kubeconfig/context имеет приоритет; без него
+клиент сначала пробует service account внутри pod, затем стандартный
+kubeconfig. Клиент использует официальный пакет `kubernetes`, не вызывает
+`oc`/`kubectl` и не изменяет kubeconfig. Для сценария рестарта service account
+или пользователь должен иметь права `get`, `list`, `delete` на `pods`, `get`
+на `pods/log` и `create` на `pods/exec`.
 
 ### S3
 
@@ -198,3 +224,133 @@ unit-тесты могут подменять boto3 без сети и реал�
 имеют стабильные поля `operation`, `target`, `cause_type`, `error_code`,
 `http_status` и `request_id`: `pytest-triage` получает диагностический контекст
 без payload, credentials и presigned URL.
+
+## OpenShift-клиент
+
+```python
+from src.openshift import OpenShiftClient, OpenShiftConfig
+
+config = OpenShiftConfig(
+    namespace="airflow",
+    auth_mode="kubeconfig",
+    kubeconfig_path="/path/to/kubeconfig",
+    context="qa",
+)
+
+name_pattern = "airflow-webserver-*"
+
+with OpenShiftClient(config) as client:
+    webserver = client.find_pod(name_pattern)
+
+    restarted = client.restart_pod_by_pattern(
+        name_pattern,
+    )
+
+    assert restarted.replacement.ready
+    assert restarted.replacement.uid != restarted.previous.uid
+```
+
+Точное имя pod не является переменной окружения. `find_pod()` получает список
+pod только из `OPENSHIFT_NAMESPACE` и применяет к имени case-sensitive glob:
+`*`, `?` и диапазоны `[...]`. Поэтому паттерн `airflow-webserver-*` продолжает
+работать после смены генерируемого суффикса. Поиск выполняется на стороне
+клиента, так как Kubernetes field selector не поддерживает glob по имени.
+
+`find_pod()` выбирает ровно один `Ready` pod. При нуле или нескольких
+совпадениях он выбрасывает `OpenShiftPodSelectionError` и не выбирает случайный
+экземпляр. `find_pods()` возвращает все совпадения, если множественный результат
+нужен самому тесту. Когда у workload есть стабильные labels, паттерн лучше
+дополнительно сузить серверным selector:
+
+```python
+webserver = openshift_client.find_pod(
+    "airflow-webserver-*",
+    label_selector="app.kubernetes.io/component=webserver",
+)
+```
+
+Для частых команд внутри Airflow webserver в корневой `conftest.py` добавлена
+третья fixture. Она хранит паттерн и container name, а не текущее имя pod:
+
+```python
+@pytest.fixture
+def web_server(openshift_client):
+    return openshift_client.container(
+        "airflow-webserver-*",
+        container_name="webserver",
+    )
+```
+
+Перед каждой операцией fixture заново находит единственный `Ready` pod.
+Поэтому один объект `web_server` продолжает работать после рестарта и смены
+суффикса:
+
+```python
+def test_dags_are_visible_in_webserver(web_server):
+    version = web_server.exec(
+        ("airflow", "version"),
+        check=True,
+    )
+    assert version.stdout.strip()
+
+    dags = web_server.sh(
+        "find /opt/airflow/dags -maxdepth 1 -type f -name '*.py'",
+        check=True,
+        timeout=30,
+    )
+    assert "example_dag.py" in dags.stdout
+```
+
+`exec()` принимает argv-последовательность без shell-интерпретации. Для pipe,
+redirect, `&&` и glob shell используется явный `sh()`. Оба метода возвращают
+`CommandResult` с `stdout`, `stderr`, `exit_code`, `duration_seconds` и
+фактическим именем pod. В container fixture `check=True` используется по
+умолчанию: ненулевой exit code немедленно завершает тест
+`OpenShiftCommandFailedError`. Для проверки негативного сценария передаётся
+`check=False`. Exec не создаёт интерактивный TTY и не поддерживает stdin — это
+намеренно детерминированный API для автоматизации.
+
+`restart_pod()` предназначен для pod под управлением Deployment, StatefulSet
+или другого контроллера. Неконтролируемый pod удалён не будет. Перед удалением
+клиент запоминает UID всех pod, подходящих под selector, добавляет UID
+precondition к DELETE и ждёт новый `Ready` pod. Поэтому гонка замены или
+существующая соседняя реплика не может дать ложноположительный результат.
+`restart_pod_by_pattern()` делает те же проверки и дополнительно принимает
+замену только от того же controller UID, которому принадлежал удалённый pod.
+
+Для диагностики доступен ограниченный хвост логов:
+
+```python
+logs = openshift_client.read_pod_logs(
+    restarted.replacement.name,
+    container="webserver",
+    tail_lines=500,
+)
+```
+
+События `openshift.client` пишутся в формате JSON Lines как в stdout, так и в
+общий файл логов. Значения сохраняют исходные типы, что удобно для CI и
+`pytest-triage`; содержимое pod logs, stdout/stderr команды, её аргументы,
+kubeconfig и credentials автоматически в события не попадают:
+
+```json
+{"timestamp":"2026-07-29T10:15:30.123+00:00","level":"INFO","logger":"openshift.client","event":"openshift_pod_restarted","namespace":"airflow","previous_pod":"airflow-webserver-old","previous_uid":"uid-old","replacement_pod":"airflow-webserver-new","replacement_uid":"uid-new"}
+```
+
+В корневом `conftest.py` находятся session-scoped `openshift_config` и
+function-scoped `openshift_client`. Клиент синхронный; его polling всегда
+ограничен timeout. Kubernetes API и clock внедряются через узкие protocols,
+поэтому unit-тесты не требуют кластера. Assertions, cleanup и проверка Airflow
+DAG остаются ответственностью тестового сценария.
+
+В асинхронном тесте с `AirflowClient` синхронный polling нельзя выполнять
+непосредственно в event loop:
+
+```python
+import asyncio
+
+restarted = await asyncio.to_thread(
+    openshift_client.restart_pod_by_pattern,
+    "airflow-webserver-*",
+)
+```

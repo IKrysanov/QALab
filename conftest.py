@@ -34,25 +34,34 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
-    base_url = config.getoption("base_url") or config_env.get("API_BASE_URL", required=True)
-    config.base_url = base_url
-
     level = config.getoption("log_level") or "INFO"
     configure_logging(level=level)
 
 
 @pytest.fixture(scope="session")
-def api_config(request) -> APIConfig:
-    base_url = request.config.base_url
+def api_base_url(request) -> str:
+    """Получить API URL только для тестов, которым он действительно нужен."""
 
-    return APIConfig(host=base_url, default_headers={"cookie": "test-cookies"})
+    return (
+        request.config.getoption("base_url")
+        or config_env.get("API_BASE_URL", required=True)
+        or ""
+    )
 
 
 @pytest.fixture(scope="session")
-def web_ui_config(request) -> WebUIConfig:
-    base_url = request.config.base_url
+def api_config(api_base_url) -> APIConfig:
 
-    return WebUIConfig(host=base_url)
+    return APIConfig(
+        host=api_base_url,
+        default_headers={"cookie": "test-cookies"},
+    )
+
+
+@pytest.fixture(scope="session")
+def web_ui_config(api_base_url) -> WebUIConfig:
+
+    return WebUIConfig(host=api_base_url)
 
 
 @pytest_asyncio.fixture(loop_scope="session", scope="session")
@@ -170,3 +179,97 @@ def s3_client(s3_config):
 
     with S3Client(s3_config) as client:
         yield client
+
+
+@pytest.fixture(scope="session")
+def openshift_config():
+    """Собрать OpenShiftConfig из общего ConfigEnv."""
+
+    from src.openshift import OpenShiftConfig
+
+    namespace = config_env.get("OPENSHIFT_NAMESPACE", required=True)
+    verify_ssl = (
+        config_env.get_bool("OPENSHIFT_VERIFY_SSL")
+        if _optional_env("OPENSHIFT_VERIFY_SSL") is not None
+        else None
+    )
+    connect_timeout = config_env.get_float(
+        "OPENSHIFT_CONNECT_TIMEOUT",
+        default=5.0,
+    )
+    read_timeout = config_env.get_float(
+        "OPENSHIFT_READ_TIMEOUT",
+        default=30.0,
+    )
+    wait_timeout = config_env.get_float(
+        "OPENSHIFT_WAIT_TIMEOUT",
+        default=300.0,
+    )
+    poll_interval = config_env.get_float(
+        "OPENSHIFT_POLL_INTERVAL",
+        default=2.0,
+    )
+    log_limit_bytes = config_env.get_int(
+        "OPENSHIFT_LOG_LIMIT_BYTES",
+        default=1_000_000,
+    )
+    exec_timeout = config_env.get_float(
+        "OPENSHIFT_EXEC_TIMEOUT",
+        default=60.0,
+    )
+    exec_output_limit_bytes = config_env.get_int(
+        "OPENSHIFT_EXEC_OUTPUT_LIMIT_BYTES",
+        default=1_000_000,
+    )
+
+    return OpenShiftConfig(
+        namespace=namespace or "",
+        auth_mode=_optional_env("OPENSHIFT_AUTH_MODE") or "auto",
+        kubeconfig_path=_optional_env("OPENSHIFT_KUBECONFIG"),
+        context=_optional_env("OPENSHIFT_CONTEXT"),
+        verify_ssl=verify_ssl,
+        ssl_ca_cert=_optional_env("OPENSHIFT_CA_CERT"),
+        connect_timeout=(
+            connect_timeout if connect_timeout is not None else 5.0
+        ),
+        read_timeout=read_timeout if read_timeout is not None else 30.0,
+        wait_timeout=wait_timeout if wait_timeout is not None else 300.0,
+        poll_interval=(
+            poll_interval if poll_interval is not None else 2.0
+        ),
+        log_limit_bytes=(
+            log_limit_bytes
+            if log_limit_bytes is not None
+            else 1_000_000
+        ),
+        exec_timeout=(
+            exec_timeout if exec_timeout is not None else 60.0
+        ),
+        exec_output_limit_bytes=(
+            exec_output_limit_bytes
+            if exec_output_limit_bytes is not None
+            else 1_000_000
+        ),
+    )
+
+
+@pytest.fixture
+@allure.title("Create OpenShift client")
+def openshift_client(openshift_config):
+    """Function-scoped OpenShift-клиент для тестовых сценариев."""
+
+    from src.openshift import OpenShiftClient
+
+    with OpenShiftClient(openshift_config) as client:
+        yield client
+
+
+@pytest.fixture
+@allure.title("Airflow webserver container")
+def web_server(openshift_client):
+    """Актуальный webserver pod; имя заново разрешается перед операцией."""
+
+    return openshift_client.container(
+        "airflow-webserver-*",
+        container_name="webserver",
+    )

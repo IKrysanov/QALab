@@ -273,7 +273,7 @@ webserver = openshift_client.find_pod(
 третья fixture. Она хранит паттерн и container name, а не текущее имя pod:
 
 ```python
-@pytest.fixture
+@pytest.fixture(scope="session")
 def web_server(openshift_client):
     return openshift_client.container(
         "airflow-webserver-*",
@@ -301,6 +301,25 @@ def test_dags_are_visible_in_webserver(web_server):
     assert "example_dag.py" in dags.stdout
 ```
 
+Переменная окружения читается адресно через `printenv`; её имя и значение не
+попадают в структурированный лог:
+
+```python
+def test_airflow_executor(web_server):
+    executor = web_server.get_env("AIRFLOW__CORE__EXECUTOR")
+    assert executor == "LocalExecutor"
+
+    optional = web_server.get_env(
+        "OPTIONAL_FEATURE_FLAG",
+        required=False,
+    )
+    assert optional in {None, "true", "false"}
+```
+
+Пустое значение возвращается как `""`, отсутствующая необязательная переменная
+— как `None`, а отсутствующая обязательная завершает тест
+`OpenShiftEnvironmentVariableNotFoundError`.
+
 `exec()` принимает argv-последовательность без shell-интерпретации. Для pipe,
 redirect, `&&` и glob shell используется явный `sh()`. Оба метода возвращают
 `CommandResult` с `stdout`, `stderr`, `exit_code`, `duration_seconds` и
@@ -325,23 +344,63 @@ logs = openshift_client.read_pod_logs(
     restarted.replacement.name,
     container="webserver",
     tail_lines=500,
+    since_seconds=300,
 )
 ```
+
+Для диагностики `CrashLoopBackOff` container fixture умеет работать с
+не-Ready pod, не ослабляя правила обычного `exec()`:
+
+```python
+crashing_pods = [
+    pod for pod in web_server.pods()
+    if not pod.ready
+]
+for pod in crashing_pods:
+    previous_logs = web_server.logs(
+        pod_name=pod.name,
+        previous=True,
+        tail_lines=500,
+    )
+    events = web_server.events(pod_name=pod.name)
+
+    for status in (
+        *pod.init_container_statuses,
+        *pod.container_statuses,
+    ):
+        print(status.state, status.last_state)
+```
+
+Если по паттерну существует ровно один pod, его логи можно получить короче:
+`web_server.logs(ready_only=False, previous=True)`. Случайный выбор при нескольких
+репликах не выполняется. `PodInfo` содержит текущие и предыдущие состояния
+обычных и init-контейнеров, включая reason, exit code, signal и время завершения.
+`events()` ограничивает запрос именем и UID pod, чтобы события старого и нового
+pod с одинаковым именем не смешивались.
 
 События `openshift.client` пишутся в формате JSON Lines как в stdout, так и в
 общий файл логов. Значения сохраняют исходные типы, что удобно для CI и
 `pytest-triage`; содержимое pod logs, stdout/stderr команды, её аргументы,
-kubeconfig и credentials автоматически в события не попадают:
+kubeconfig и credentials автоматически в события и текст исключения команды
+не попадают:
 
 ```json
 {"timestamp":"2026-07-29T10:15:30.123+00:00","level":"INFO","logger":"openshift.client","event":"openshift_pod_restarted","namespace":"airflow","previous_pod":"airflow-webserver-old","previous_uid":"uid-old","replacement_pod":"airflow-webserver-new","replacement_uid":"uid-new"}
 ```
 
-В корневом `conftest.py` находятся session-scoped `openshift_config` и
-function-scoped `openshift_client`. Клиент синхронный; его polling всегда
-ограничен timeout. Kubernetes API и clock внедряются через узкие protocols,
-поэтому unit-тесты не требуют кластера. Assertions, cleanup и проверка Airflow
-DAG остаются ответственностью тестового сценария.
+В корневом `conftest.py` вся OpenShift-цепочка имеет session scope:
+`openshift_config`, `openshift_client` и `web_server`. При xdist каждый worker
+создаёт собственную session fixture. Клиент нельзя вручную закрывать из теста:
+transport закрывается pytest в teardown сессии. Клиент синхронный; polling
+всегда ограничен timeout. Kubernetes API и clock внедряются через узкие
+protocols, поэтому unit-тесты не требуют кластера. Assertions, cleanup и
+проверка Airflow DAG остаются ответственностью тестового сценария.
+
+Session scope переиспользует соединение, но не изолирует изменения кластера
+между тестами. Тесты, удаляющие или перезапускающие один и тот же pod, нельзя
+выполнять параллельно в разных xdist-workers без внешней сериализации. Сам
+клиент не повторяет exec-команды автоматически: повтор неидемпотентной команды
+после сетевой ошибки мог бы дважды изменить состояние контейнера.
 
 В асинхронном тесте с `AirflowClient` синхронный polling нельзя выполнять
 непосредственно в event loop:

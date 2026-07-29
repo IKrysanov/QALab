@@ -6,7 +6,6 @@ import logging
 import math
 import time
 from collections.abc import Sequence, Set as AbstractSet
-from datetime import datetime
 from fnmatch import fnmatchcase
 from threading import RLock
 from types import TracebackType
@@ -31,7 +30,8 @@ from .exceptions import (
     OpenShiftWaitTimeoutError,
 )
 from .kubernetes_factory import KubernetesOpenShiftServiceFactory
-from .models import CommandResult, PodInfo, PodRestartResult
+from .mappers import to_pod_event_info, to_pod_info
+from .models import CommandResult, PodEventInfo, PodInfo, PodRestartResult
 from .protocols import (
     Clock,
     CoreV1Service,
@@ -41,6 +41,16 @@ from .protocols import (
 )
 
 logger = get_logger("openshift.client")
+
+_RETRYABLE_API_STATUSES = frozenset({429, 500, 502, 503, 504})
+_RETRYABLE_CAUSE_TYPES = frozenset({
+    "ConnectTimeoutError",
+    "ConnectionError",
+    "MaxRetryError",
+    "ProtocolError",
+    "ReadTimeoutError",
+    "TimeoutError",
+})
 
 
 class SystemClock:
@@ -186,7 +196,7 @@ class OpenShiftClient:
             )
 
         return [
-            self._to_pod_info(pod)
+            to_pod_info(pod)
             for pod in (getattr(response, "items", None) or [])
         ]
 
@@ -251,6 +261,77 @@ class OpenShiftClient:
             ready=selected.ready,
         )
         return selected
+
+    def wait_for_pod_by_pattern(
+            self,
+            name_pattern: str,
+            *,
+            label_selector: Optional[str] = None,
+            field_selector: Optional[str] = None,
+            timeout: Optional[float] = None,
+            poll_interval: Optional[float] = None,
+    ) -> PodInfo:
+        """Дождаться единственного Ready pod по glob-паттерну."""
+
+        self._ensure_open()
+        self._validate_required_text("name_pattern", name_pattern)
+        self._validate_optional_text(
+            "label_selector",
+            label_selector,
+        )
+        self._validate_optional_text(
+            "field_selector",
+            field_selector,
+        )
+        effective_timeout, effective_interval = self._wait_settings(
+            timeout,
+            poll_interval,
+        )
+        deadline = self._clock.monotonic() + effective_timeout
+        last_observed = "no pods"
+
+        while True:
+            try:
+                matches = self.find_pods(
+                    name_pattern,
+                    label_selector=label_selector,
+                    field_selector=field_selector,
+                )
+                ready_matches = [pod for pod in matches if pod.ready]
+                if len(ready_matches) == 1:
+                    selected = ready_matches[0]
+                    log_event(
+                        logger,
+                        logging.INFO,
+                        "openshift_pod_selected",
+                        namespace=self.namespace,
+                        name_pattern=name_pattern,
+                        label_selector=label_selector,
+                        pod=selected.name,
+                        uid=selected.uid,
+                        ready=True,
+                        waited=True,
+                    )
+                    return selected
+                last_observed = self._pods_summary(matches)
+            except OpenShiftOperationError as exc:
+                if not self._is_retryable_wait_error(
+                        "wait_for_pod_by_pattern",
+                        exc,
+                ):
+                    raise
+                last_observed = self._wait_error_summary(exc)
+
+            if not self._sleep_until_next_poll(
+                    deadline,
+                    effective_interval,
+            ):
+                raise OpenShiftWaitTimeoutError(
+                    f"wait_for_pod_by_pattern:{name_pattern}",
+                    self.namespace,
+                    effective_timeout,
+                    last_observed=last_observed,
+                )
 
     def container(
             self,
@@ -317,6 +398,18 @@ class OpenShiftClient:
             effective_output_limit,
         )
 
+        log_event(
+            logger,
+            logging.INFO,
+            "openshift_command_started",
+            namespace=self.namespace,
+            pod=pod_name,
+            container=container,
+            executable=normalized_command[0],
+            argument_count=len(normalized_command) - 1,
+            timeout=float(effective_timeout),
+            output_limit_bytes=effective_output_limit,
+        )
         try:
             with self._api_lock:
                 result = self._pod_executor.execute(
@@ -408,7 +501,7 @@ class OpenShiftClient:
                 pod_name,
                 exc,
             )
-        return self._to_pod_info(pod)
+        return to_pod_info(pod)
 
     def pod_exists(self, pod_name: str) -> bool:
         """Проверить существование pod, не скрывая ошибки RBAC."""
@@ -436,6 +529,7 @@ class OpenShiftClient:
             previous: bool = False,
             tail_lines: int = 500,
             limit_bytes: Optional[int] = None,
+            since_seconds: Optional[int] = None,
             timestamps: bool = True,
     ) -> str:
         """Прочитать ограниченный хвост логов pod для диагностики теста."""
@@ -444,6 +538,8 @@ class OpenShiftClient:
         self._validate_required_text("pod_name", pod_name)
         self._validate_optional_text("container", container)
         self._validate_positive_int("tail_lines", tail_lines)
+        if since_seconds is not None:
+            self._validate_positive_int("since_seconds", since_seconds)
         self._validate_bool("previous", previous)
         self._validate_bool("timestamps", timestamps)
         effective_limit = (
@@ -462,6 +558,8 @@ class OpenShiftClient:
         }
         if container is not None:
             request["container"] = container
+        if since_seconds is not None:
+            request["since_seconds"] = since_seconds
 
         try:
             with self._api_lock:
@@ -489,6 +587,58 @@ class OpenShiftClient:
                 error,
             )
         return logs
+
+    def list_pod_events(
+            self,
+            pod_name: str,
+            *,
+            pod_uid: Optional[str] = None,
+    ) -> list[PodEventInfo]:
+        """Вернуть диагностические события конкретного pod."""
+
+        self._ensure_open()
+        self._validate_required_text("pod_name", pod_name)
+        self._validate_optional_text("pod_uid", pod_uid)
+
+        selectors = [
+            "involvedObject.kind=Pod",
+            f"involvedObject.name={pod_name}",
+            f"involvedObject.namespace={self.namespace}",
+        ]
+        if pod_uid is not None:
+            selectors.append(f"involvedObject.uid={pod_uid}")
+
+        try:
+            with self._api_lock:
+                response = self._core_api.list_namespaced_event(
+                    self.namespace,
+                    field_selector=",".join(selectors),
+                    _request_timeout=self._config.request_timeout,
+                )
+        except Exception as exc:
+            self._raise_operation_error(
+                "list_namespaced_event",
+                "pod_events",
+                pod_name,
+                exc,
+            )
+
+        events = [
+            to_pod_event_info(event)
+            for event in (getattr(response, "items", None) or [])
+        ]
+        return sorted(
+            events,
+            key=lambda event: (
+                (
+                    event.last_seen_at.isoformat()
+                    if event.last_seen_at is not None
+                    else ""
+                ),
+                event.reason or "",
+                event.message or "",
+            ),
+        )
 
     def delete_pod(
             self,
@@ -569,12 +719,19 @@ class OpenShiftClient:
 
         while True:
             try:
-                pod = self._to_pod_info(self._read_pod(pod_name))
+                pod = to_pod_info(self._read_pod(pod_name))
                 last_observed = self._pod_summary(pod)
                 if pod.ready:
                     return pod
             except Exception as exc:
-                if not self._is_not_found(exc):
+                if self._is_not_found(exc):
+                    last_observed = "pod not found"
+                elif self._is_retryable_wait_error(
+                        "wait_for_pod_ready",
+                        exc,
+                ):
+                    last_observed = self._wait_error_summary(exc)
+                else:
                     self._raise_operation_error(
                         "read_namespaced_pod",
                         "pod",
@@ -628,30 +785,42 @@ class OpenShiftClient:
             poll_interval,
         )
         deadline = self._clock.monotonic() + effective_timeout
+        last_observed = "no pods"
 
         while True:
-            pods = (
-                self.find_pods(
-                    name_pattern,
-                    label_selector=label_selector,
+            try:
+                pods = (
+                    self.find_pods(
+                        name_pattern,
+                        label_selector=label_selector,
+                    )
+                    if name_pattern is not None
+                    else self.list_pods(label_selector=label_selector)
                 )
-                if name_pattern is not None
-                else self.list_pods(label_selector=label_selector)
-            )
-            last_observed = self._pods_summary(pods)
-            replacements = [
-                pod
-                for pod in pods
-                if pod.uid is not None
-                and pod.uid not in excluded_uids
-                and pod.ready
-                and (
-                    expected_controller_uid is None
-                    or pod.controller_uid == expected_controller_uid
-                )
-            ]
-            if replacements:
-                return sorted(replacements, key=lambda pod: pod.name)[0]
+                last_observed = self._pods_summary(pods)
+                replacements = [
+                    pod
+                    for pod in pods
+                    if pod.uid is not None
+                    and pod.uid not in excluded_uids
+                    and pod.ready
+                    and (
+                        expected_controller_uid is None
+                        or pod.controller_uid == expected_controller_uid
+                    )
+                ]
+                if replacements:
+                    return sorted(
+                        replacements,
+                        key=lambda pod: pod.name,
+                    )[0]
+            except OpenShiftOperationError as exc:
+                if not self._is_retryable_wait_error(
+                        "wait_for_replacement_pod",
+                        exc,
+                ):
+                    raise
+                last_observed = self._wait_error_summary(exc)
 
             if not self._sleep_until_next_poll(
                     deadline,
@@ -851,105 +1020,6 @@ class OpenShiftClient:
                 _request_timeout=self._config.request_timeout,
             )
 
-    @staticmethod
-    def _to_pod_info(pod: Any) -> PodInfo:
-        metadata = getattr(pod, "metadata", None)
-        spec = getattr(pod, "spec", None)
-        status = getattr(pod, "status", None)
-
-        raw_labels = getattr(metadata, "labels", None) or {}
-        labels = (
-            {
-                str(key): str(value)
-                for key, value in raw_labels.items()
-            }
-            if isinstance(raw_labels, Mapping)
-            else {}
-        )
-        conditions = getattr(status, "conditions", None) or []
-        ready_condition = any(
-            getattr(condition, "type", None) == "Ready"
-            and str(getattr(condition, "status", "")).lower() == "true"
-            for condition in conditions
-        )
-        phase = OpenShiftClient._optional_string(
-            getattr(status, "phase", None)
-        )
-        terminating = (
-            getattr(metadata, "deletion_timestamp", None) is not None
-        )
-        container_statuses = (
-            getattr(status, "container_statuses", None) or []
-        )
-        controller_reference = next(
-            (
-                reference
-                for reference in (
-                    getattr(metadata, "owner_references", None) or []
-                )
-                if getattr(reference, "controller", None) is True
-            ),
-            None,
-        )
-        containers = tuple(
-            str(getattr(container, "name"))
-            for container in (getattr(spec, "containers", None) or [])
-            if getattr(container, "name", None) is not None
-        )
-        restart_count = sum(
-            value
-            for value in (
-                getattr(container_status, "restart_count", 0)
-                for container_status in container_statuses
-            )
-            if isinstance(value, int) and not isinstance(value, bool)
-        )
-
-        return PodInfo(
-            name=str(getattr(metadata, "name", "")),
-            namespace=str(getattr(metadata, "namespace", "")),
-            uid=OpenShiftClient._optional_string(
-                getattr(metadata, "uid", None)
-            ),
-            phase=phase,
-            ready=(
-                phase == "Running"
-                and ready_condition
-                and not terminating
-            ),
-            terminating=terminating,
-            labels=labels,
-            containers=containers,
-            restart_count=restart_count,
-            pod_ip=OpenShiftClient._optional_string(
-                getattr(status, "pod_ip", None)
-            ),
-            node_name=OpenShiftClient._optional_string(
-                getattr(spec, "node_name", None)
-            ),
-            controller_kind=OpenShiftClient._optional_string(
-                getattr(controller_reference, "kind", None)
-            ),
-            controller_name=OpenShiftClient._optional_string(
-                getattr(controller_reference, "name", None)
-            ),
-            controller_uid=OpenShiftClient._optional_string(
-                getattr(controller_reference, "uid", None)
-            ),
-            created_at=OpenShiftClient._optional_datetime(
-                getattr(metadata, "creation_timestamp", None)
-            ),
-            started_at=OpenShiftClient._optional_datetime(
-                getattr(status, "start_time", None)
-            ),
-            reason=OpenShiftClient._optional_string(
-                getattr(status, "reason", None)
-            ),
-            message=OpenShiftClient._optional_string(
-                getattr(status, "message", None)
-            ),
-        )
-
     def _wait_settings(
             self,
             timeout: Optional[float],
@@ -997,6 +1067,44 @@ class OpenShiftClient:
         if not pods:
             return "no pods"
         return "; ".join(cls._pod_summary(pod) for pod in pods)
+
+    def _is_retryable_wait_error(
+            self,
+            operation: str,
+            exc: Exception,
+    ) -> bool:
+        status = getattr(exc, "status", None)
+        cause_type = (
+            getattr(exc, "cause_type", None)
+            or type(exc).__name__
+        )
+        retryable = (
+            status in _RETRYABLE_API_STATUSES
+            or (
+                status is None
+                and cause_type in _RETRYABLE_CAUSE_TYPES
+            )
+        )
+        if retryable:
+            log_event(
+                logger,
+                logging.WARNING,
+                "openshift_wait_api_error_retried",
+                operation=operation,
+                namespace=self.namespace,
+                status=status,
+                cause_type=cause_type,
+            )
+        return retryable
+
+    @staticmethod
+    def _wait_error_summary(exc: Exception) -> str:
+        status = getattr(exc, "status", None)
+        cause_type = (
+            getattr(exc, "cause_type", None)
+            or type(exc).__name__
+        )
+        return f"api error status={status!r} cause_type={cause_type!r}"
 
     def _raise_operation_error(
             self,
@@ -1129,7 +1237,3 @@ class OpenShiftClient:
     @staticmethod
     def _optional_string(value: Any) -> Optional[str]:
         return str(value) if value is not None else None
-
-    @staticmethod
-    def _optional_datetime(value: Any) -> Optional[datetime]:
-        return value if isinstance(value, datetime) else None

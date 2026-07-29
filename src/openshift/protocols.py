@@ -43,6 +43,13 @@ class CoreV1Service(Protocol):
     ) -> str:
         ...
 
+    def list_namespaced_event(
+            self,
+            namespace: str,
+            **kwargs: Any,
+    ) -> Any:
+        ...
+
     def connect_post_namespaced_pod_exec(
             self,
             name: str,

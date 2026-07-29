@@ -12,11 +12,19 @@ from .exceptions import (
     OpenShiftConfigurationError,
     OpenShiftContainerSelectionError,
     OpenShiftDependencyError,
+    OpenShiftEnvironmentVariableNotFoundError,
     OpenShiftOperationError,
     OpenShiftPodSelectionError,
     OpenShiftWaitTimeoutError,
 )
-from .models import CommandResult, PodInfo, PodRestartResult
+from .models import (
+    CommandResult,
+    ContainerStateInfo,
+    ContainerStatusInfo,
+    PodEventInfo,
+    PodInfo,
+    PodRestartResult,
+)
 from .protocols import (
     Clock,
     CoreV1Service,
@@ -28,6 +36,8 @@ from .protocols import (
 __all__ = [
     "Clock",
     "CommandResult",
+    "ContainerStateInfo",
+    "ContainerStatusInfo",
     "CoreV1Service",
     "KubernetesApiClient",
     "OpenShiftClient",
@@ -41,11 +51,13 @@ __all__ = [
     "OpenShiftContainer",
     "OpenShiftContainerSelectionError",
     "OpenShiftDependencyError",
+    "OpenShiftEnvironmentVariableNotFoundError",
     "OpenShiftOperationError",
     "OpenShiftPodSelectionError",
     "OpenShiftServiceFactory",
     "OpenShiftWaitTimeoutError",
     "PodExecutor",
+    "PodEventInfo",
     "PodInfo",
     "PodRestartResult",
 ]

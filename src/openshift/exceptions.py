@@ -115,21 +115,43 @@ class OpenShiftContainerSelectionError(OpenShiftClientError):
         )
 
 
+class OpenShiftEnvironmentVariableNotFoundError(
+        OpenShiftClientError,
+        LookupError,
+):
+    """Запрошенная переменная отсутствует в окружении контейнера."""
+
+    def __init__(
+            self,
+            namespace: str,
+            pod_name: str,
+            container_name: str,
+            variable_name: str,
+    ) -> None:
+        self.namespace = namespace
+        self.pod_name = pod_name
+        self.container_name = container_name
+        self.variable_name = variable_name
+        super().__init__(
+            "OpenShift container environment variable not found: "
+            f"namespace={namespace!r}, pod_name={pod_name!r}, "
+            f"container_name={container_name!r}, "
+            f"variable_name={variable_name!r}"
+        )
+
+
 class OpenShiftCommandFailedError(OpenShiftClientError):
     """Процесс в контейнере завершился с ненулевым кодом."""
 
     def __init__(self, result: "CommandResult") -> None:
         self.result = result
-        output = result.stderr or result.stdout
-        output_excerpt = output[-2_000:]
         super().__init__(
             "OpenShift command failed: "
             f"namespace={result.namespace!r}, "
             f"pod_name={result.pod_name!r}, "
             f"container_name={result.container_name!r}, "
             f"executable={result.command[0]!r}, "
-            f"exit_code={result.exit_code}, "
-            f"output_excerpt={output_excerpt!r}"
+            f"exit_code={result.exit_code}"
         )
 
 

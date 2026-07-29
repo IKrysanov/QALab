@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
+from threading import RLock
 from typing import Any, Optional
 
 from .models import CommandResult
 from .protocols import CoreV1Service
+
+_CONNECT_TIMEOUT_MESSAGE = "pod exec websocket connect timed out"
+_WEBSOCKET_CLASS_LOCK = RLock()
 
 
 class PodExecTransportTimeoutError(TimeoutError):
@@ -16,6 +21,39 @@ class PodExecTransportTimeoutError(TimeoutError):
 
 class PodExecTransportOutputTooLargeError(RuntimeError):
     """Внутреннее превышение лимита вывода exec."""
+
+
+class KubernetesWebSocketConnectTimeout:
+    """Ограничивает connect/handshake, который SDK не связывает с timeout."""
+
+    @contextmanager
+    def apply(self, timeout: float) -> Iterator[None]:
+        """Временно передать socket timeout в ``WebSocket.connect`` SDK."""
+
+        from kubernetes.stream import ws_client
+        from websocket import WebSocketTimeoutException
+
+        with _WEBSOCKET_CLASS_LOCK:
+            original_websocket = ws_client.WebSocket
+
+            class BoundedConnectWebSocket(original_websocket):
+                def connect(self, url: str, **options: Any) -> Any:
+                    options.setdefault("timeout", timeout)
+                    try:
+                        return super().connect(url, **options)
+                    except (
+                            TimeoutError,
+                            WebSocketTimeoutException,
+                    ) as exc:
+                        raise PodExecTransportTimeoutError(
+                            _CONNECT_TIMEOUT_MESSAGE
+                        ) from exc
+
+            ws_client.WebSocket = BoundedConnectWebSocket
+            try:
+                yield
+            finally:
+                ws_client.WebSocket = original_websocket
 
 
 class KubernetesPodExecutor:
@@ -27,10 +65,17 @@ class KubernetesPodExecutor:
             *,
             stream_function: Optional[Callable[..., Any]] = None,
             monotonic: Callable[[], float] = time.monotonic,
+            connect_timeout: Optional[
+                KubernetesWebSocketConnectTimeout
+            ] = None,
     ) -> None:
         self._core_api = core_api
         self._stream_function = stream_function
         self._monotonic = monotonic
+        self._connect_timeout = (
+            connect_timeout
+            or KubernetesWebSocketConnectTimeout()
+        )
 
     def execute(
             self,
@@ -49,19 +94,33 @@ class KubernetesPodExecutor:
             stream_function = stream
 
         started_at = self._monotonic()
-        websocket = stream_function(
-            self._core_api.connect_post_namespaced_pod_exec,
-            pod_name,
-            namespace,
-            command=list(command),
-            container=container_name,
-            stderr=True,
-            stdin=False,
-            stdout=True,
-            tty=False,
-            _preload_content=False,
-            _request_timeout=timeout,
-        )
+        try:
+            with self._connect_timeout.apply(timeout):
+                websocket = stream_function(
+                    self._core_api.connect_post_namespaced_pod_exec,
+                    pod_name,
+                    namespace,
+                    command=list(command),
+                    container=container_name,
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False,
+                    _preload_content=False,
+                    _request_timeout=timeout,
+                )
+        except PodExecTransportTimeoutError:
+            raise
+        except Exception as exc:
+            if (
+                    getattr(exc, "status", None) == 0
+                    and getattr(exc, "reason", None)
+                    == _CONNECT_TIMEOUT_MESSAGE
+            ):
+                raise PodExecTransportTimeoutError(
+                    _CONNECT_TIMEOUT_MESSAGE
+                ) from exc
+            raise
         try:
             self._validate_websocket(websocket)
         except Exception:

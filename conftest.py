@@ -253,10 +253,10 @@ def openshift_config():
     )
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 @allure.title("Create OpenShift client")
 def openshift_client(openshift_config):
-    """Function-scoped OpenShift-клиент для тестовых сценариев."""
+    """Session-scoped OpenShift-клиент для тестовых сценариев."""
 
     from src.openshift import OpenShiftClient
 
@@ -264,7 +264,7 @@ def openshift_client(openshift_config):
         yield client
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 @allure.title("Airflow webserver container")
 def web_server(openshift_client):
     """Актуальный webserver pod; имя заново разрешается перед операцией."""

@@ -114,3 +114,44 @@ def test_delete_uid_precondition_matches_generated_sdk_contract():
         "preconditions": {"uid": "uid-42"},
     }
     assert request.kwargs["_request_timeout"] == (5.0, 30.0)
+
+
+def test_pod_events_query_matches_generated_sdk_contract():
+    from kubernetes import client as kubernetes_client
+
+    api_client = kubernetes_client.ApiClient()
+    core_api = kubernetes_client.CoreV1Api(api_client)
+    openshift = OpenShiftClient(
+        OpenShiftConfig(namespace="airflow"),
+        core_api=core_api,
+    )
+
+    try:
+        with patch.object(
+                api_client,
+                "call_api",
+                return_value=kubernetes_client.CoreV1EventList(items=[]),
+        ) as call_api:
+            events = openshift.list_pod_events(
+                "airflow-webserver-a1b2",
+                pod_uid="uid-a1b2",
+            )
+    finally:
+        api_client.close()
+
+    assert events == []
+    request = call_api.call_args
+    assert request.args[:2] == (
+        "/api/v1/namespaces/{namespace}/events",
+        "GET",
+    )
+    assert (
+        "fieldSelector",
+        (
+            "involvedObject.kind=Pod,"
+            "involvedObject.name=airflow-webserver-a1b2,"
+            "involvedObject.namespace=airflow,"
+            "involvedObject.uid=uid-a1b2"
+        ),
+    ) in request.args[3]
+    assert request.kwargs["_request_timeout"] == (5.0, 30.0)

@@ -8,6 +8,32 @@ from typing import Mapping, Optional
 
 
 @dataclass(frozen=True)
+class ContainerStateInfo:
+    """Текущее или предыдущее состояние одного контейнера."""
+
+    state: str
+    reason: Optional[str] = None
+    message: Optional[str] = None
+    exit_code: Optional[int] = None
+    signal: Optional[int] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+
+@dataclass(frozen=True)
+class ContainerStatusInfo:
+    """Диагностическое состояние контейнера без SDK-моделей."""
+
+    name: str
+    ready: bool
+    restart_count: int
+    image: Optional[str] = None
+    image_id: Optional[str] = None
+    state: Optional[ContainerStateInfo] = None
+    last_state: Optional[ContainerStateInfo] = None
+
+
+@dataclass(frozen=True)
 class PodInfo:
     """Стабильное представление pod без зависимости от SDK-моделей."""
 
@@ -19,6 +45,8 @@ class PodInfo:
     terminating: bool
     labels: Mapping[str, str] = field(default_factory=dict)
     containers: tuple[str, ...] = ()
+    container_statuses: tuple[ContainerStatusInfo, ...] = ()
+    init_container_statuses: tuple[ContainerStatusInfo, ...] = ()
     restart_count: int = 0
     pod_ip: Optional[str] = None
     node_name: Optional[str] = None
@@ -29,6 +57,19 @@ class PodInfo:
     started_at: Optional[datetime] = None
     reason: Optional[str] = None
     message: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class PodEventInfo:
+    """Событие Kubernetes, относящееся к конкретному pod."""
+
+    event_type: Optional[str]
+    reason: Optional[str]
+    message: Optional[str]
+    count: int
+    source: Optional[str] = None
+    first_seen_at: Optional[datetime] = None
+    last_seen_at: Optional[datetime] = None
 
 
 @dataclass(frozen=True)

@@ -71,6 +71,10 @@ class KubernetesOpenShiftServiceFactory:
             configuration.verify_ssl = config.verify_ssl
         if config.ssl_ca_cert is not None:
             configuration.ssl_ca_cert = config.ssl_ca_cert
+        # Polling-ретраи принадлежат OpenShiftClient и ограничены wait_timeout.
+        # Скрытые urllib3 retries умножают задержку каждого polling-вызова,
+        # а при неверном CA создают впечатление бесконечного повтора.
+        configuration.retries = 0
 
         api_client = client.ApiClient(configuration=configuration)
         return client.CoreV1Api(api_client), api_client

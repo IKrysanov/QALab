@@ -66,6 +66,7 @@ def test_factory_builds_isolated_official_kubernetes_client(
             "https://cluster.example.test:6443"
         )
         assert api_client.configuration.verify_ssl is True
+        assert api_client.configuration.retries == 0
         assert api_client.configuration.api_key["authorization"] == (
             "Bearer test-token"
         )

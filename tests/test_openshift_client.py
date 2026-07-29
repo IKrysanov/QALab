@@ -1,10 +1,12 @@
 import json
 import logging
+import ssl
 from io import StringIO
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+from urllib3.exceptions import MaxRetryError, SSLError
 
 from src.openshift import (
     CommandResult,
@@ -1274,6 +1276,84 @@ def test_wait_for_pod_by_pattern_does_not_retry_forbidden(
 
     assert error.value.status == 403
     assert clock.sleeps == []
+
+
+def test_wait_for_pod_by_pattern_does_not_retry_certificate_error(
+        client,
+        core_api,
+        clock,
+):
+    certificate_error = ssl.SSLCertVerificationError(
+        1,
+        "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed",
+    )
+    core_api.list_error = MaxRetryError(
+        None,
+        "/api/v1/namespaces/airflow/pods",
+        SSLError(certificate_error),
+    )
+
+    with pytest.raises(OpenShiftOperationError) as error:
+        client.wait_for_pod_by_pattern(
+            "airflow-webserver-*",
+            timeout=5,
+            poll_interval=1,
+        )
+
+    assert error.value.cause_type == "MaxRetryError"
+    assert clock.sleeps == []
+    assert [
+        call[0]
+        for call in core_api.calls
+        if call[0] == "list_namespaced_pod"
+    ] == ["list_namespaced_pod"]
+
+
+def test_wait_for_pod_ready_does_not_retry_sdk_certificate_error(
+        client,
+        core_api,
+        clock,
+):
+    core_api.read_responses = [
+        FakeApiError(
+            0,
+            "SSLError: certificate verify failed: "
+            "unable to get local issuer certificate",
+        ),
+    ]
+
+    with pytest.raises(OpenShiftOperationError) as error:
+        client.wait_for_pod_ready(
+            "airflow-webserver-a1b2",
+            timeout=5,
+            poll_interval=1,
+        )
+
+    assert error.value.status == 0
+    assert clock.sleeps == []
+
+
+def test_wait_for_pod_ready_still_retries_transient_max_retry_error(
+        client,
+        core_api,
+        clock,
+):
+    transient_error = type("MaxRetryError", (Exception,), {})(
+        "connection refused"
+    )
+    core_api.read_responses = [
+        transient_error,
+        make_pod("scheduler-42", "uid-42"),
+    ]
+
+    pod = client.wait_for_pod_ready(
+        "scheduler-42",
+        timeout=5,
+        poll_interval=1,
+    )
+
+    assert pod.uid == "uid-42"
+    assert clock.sleeps == [1]
 
 
 def test_wait_for_replacement_pod_retries_transient_list_failure(

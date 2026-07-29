@@ -39,18 +39,9 @@ from .protocols import (
     OpenShiftServiceFactory,
     PodExecutor,
 )
+from .retry_policy import classify_wait_error
 
 logger = get_logger("openshift.client")
-
-_RETRYABLE_API_STATUSES = frozenset({429, 500, 502, 503, 504})
-_RETRYABLE_CAUSE_TYPES = frozenset({
-    "ConnectTimeoutError",
-    "ConnectionError",
-    "MaxRetryError",
-    "ProtocolError",
-    "ReadTimeoutError",
-    "TimeoutError",
-})
 
 
 class SystemClock:
@@ -1078,14 +1069,8 @@ class OpenShiftClient:
             getattr(exc, "cause_type", None)
             or type(exc).__name__
         )
-        retryable = (
-            status in _RETRYABLE_API_STATUSES
-            or (
-                status is None
-                and cause_type in _RETRYABLE_CAUSE_TYPES
-            )
-        )
-        if retryable:
+        decision = classify_wait_error(exc)
+        if decision.retry:
             log_event(
                 logger,
                 logging.WARNING,
@@ -1094,8 +1079,20 @@ class OpenShiftClient:
                 namespace=self.namespace,
                 status=status,
                 cause_type=cause_type,
+                retry_reason=decision.reason,
             )
-        return retryable
+        elif decision.reason == "tls_certificate_validation":
+            log_event(
+                logger,
+                logging.ERROR,
+                "openshift_wait_api_error_not_retried",
+                operation=operation,
+                namespace=self.namespace,
+                status=status,
+                cause_type=cause_type,
+                retry_reason=decision.reason,
+            )
+        return decision.retry
 
     @staticmethod
     def _wait_error_summary(exc: Exception) -> str:

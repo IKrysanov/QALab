@@ -41,6 +41,13 @@ S3_ENDPOINT_URL=
 # S3_READ_TIMEOUT=30
 # S3_MAX_ATTEMPTS=3
 
+# Шифрование локальных DAG-ов перед загрузкой в S3 (utils/dag_encryptor.py).
+# Ключ Fernet: python -c "from utils.dag_encryptor import DagEncryptor; print(DagEncryptor.generate_key())"
+# При ротации перечисляются через запятую: шифрует первый, расшифровывают все.
+DAG_FERNET_KEY=
+# Папка с локальными DAG-ами; по умолчанию tests/dags в корне проекта.
+# DAGS_LOCAL_DIR=
+
 # OpenShift / Kubernetes API
 OPENSHIFT_NAMESPACE=
 # OPENSHIFT_AUTH_MODE=auto

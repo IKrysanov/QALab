@@ -45,12 +45,14 @@ class ConnectionsEndpoint(BaseEndpoint):
             self,
             connection_id: str,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         """GET /api/v2/connections/{connection_id}."""
         return await self._http.get(
             f"{self.PATH}/{connection_id}",
             expected_status=expected_status,
             response_model=ConnectionResponse if expected_status == HTTPStatus.OK else None,
+            **kwargs,
         )
 
     async def create(

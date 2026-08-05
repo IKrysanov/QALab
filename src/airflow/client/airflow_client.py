@@ -468,7 +468,7 @@ class AirflowClient:
         return _parse(resp, XComResponse).value
 
     # ------------------------------------------------------------------ #
-    #  DAGs (pause / unpause)                                              #
+    #  DAGs (exists / wait / pause / unpause)                              #
     # ------------------------------------------------------------------ #
 
     async def get_dag(self, dag_id: str) -> DAGResponse:
@@ -480,6 +480,70 @@ class AirflowClient:
         """Список DAG-ов (фильтры — tags/paused/only_active/... — пробрасываются)."""
         resp = await self._api.dags.list(**kwargs)
         return _parse(resp, DAGCollectionResponse).dags
+
+    async def dag_exists(self, dag_id: str) -> bool:
+        """Проверить, существует ли DAG (удобно в фикстурах и перед триггером).
+
+        Делает GET без валидации статуса/тела: ``200`` → ``True``, ``404`` → ``False``.
+        Любой другой статус — это не «нет/есть», а реальная проблема (нет прав,
+        5xx и т.п.), поэтому поднимаем :class:`AirflowClientError`.
+
+        Проверяется факт регистрации DAG-а в Airflow: DAG на паузе — существует.
+        Обратите внимание, что для DAG-а, чей файл уже удалён из dags-папки,
+        Airflow какое-то время продолжает отдавать ``200`` (запись остаётся в БД
+        как неактивная/stale), хотя в выдаче ``list_dags`` его уже нет.
+        """
+        resp = await self._api.dags.get(
+            dag_id, validate_status=False, validate_response=False,
+        )
+        if resp.status_code == HTTPStatus.OK:
+            logger.debug("DAG '%s' exists", dag_id)
+            return True
+        if resp.status_code == HTTPStatus.NOT_FOUND:
+            logger.debug("DAG '%s' does not exist", dag_id)
+            return False
+        raise AirflowClientError(
+            f"Unexpected status {resp.status_code} while checking DAG "
+            f"'{dag_id}': {resp.text}"
+        )
+
+    async def wait_dag(
+            self,
+            dag_id: str,
+            *,
+            timeout: float = DEFAULT_WAIT_TIMEOUT,
+            poll_interval: float = DEFAULT_POLL_INTERVAL,
+            should_exist: bool = True,
+    ) -> Optional[DAGResponse]:
+        """Дождаться появления DAG-а в Airflow (поллинг :meth:`dag_exists`).
+
+        Нужен, когда DAG выкатывается в dags-папку и в API появляется не сразу —
+        только после очередного парсинга планировщиком: до этого ``get_dag`` и
+        ``trigger_dag`` отдают 404. При ``should_exist=False`` ждём обратного —
+        что DAG пропал (например, после удаления DAG-файла в teardown).
+
+        Возвращает :class:`DAGResponse` дождавшегося DAG-а (при ``should_exist=False``
+        — ``None``, возвращать нечего). Бросает :class:`WaitTimeoutError`, если за
+        ``timeout`` условие не выполнилось.
+        """
+        target = "appear" if should_exist else "disappear"
+
+        with allure.step(f"Wait for DAG '{dag_id}' to {target}"):
+            # _poll отдаёт None только по таймауту: при should_exist=False
+            # успешный результат — это False, поэтому сравниваем с None.
+            result = await self._poll(
+                lambda: self.dag_exists(dag_id),
+                lambda exists: exists is should_exist,
+                timeout=timeout,
+                poll_interval=poll_interval,
+                label=f"DAG '{dag_id}' to {target}",
+            )
+        if result is None:
+            logger.error("DAG '%s' did not %s within %ss", dag_id, target, timeout)
+            raise WaitTimeoutError(f"DAG '{dag_id}' did not {target} within {timeout}s")
+
+        logger.info("DAG '%s' %s", dag_id, "appeared" if should_exist else "disappeared")
+        return await self.get_dag(dag_id) if should_exist else None
 
     async def set_dag_paused(self, dag_id: str, is_paused: bool) -> DAGResponse:
         """PATCH /dags/{dag_id} — выставить is_paused."""

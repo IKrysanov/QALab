@@ -101,12 +101,14 @@ class DagsEndpoint(BaseEndpoint):
             self,
             dag_id: str,
             expected_status: StatusCode = HTTPStatus.OK,
+            **kwargs: Any,
     ) -> Response:
         """GET /api/v2/dags/{dag_id}."""
         return await self._http.get(
             f"{self.PATH}/{dag_id}",
             expected_status=expected_status,
             response_model=DAGResponse if expected_status == HTTPStatus.OK else None,
+            **kwargs,
         )
 
     async def get_details(

@@ -26,6 +26,7 @@ DEFAULT_LOGS_DIR = PROJECT_ROOT / "logs"
 MANAGED_LOGGERS = (
     "async_api_client",
     "airflow.client",
+    "dags.encryptor",
     "infra.health",
     "s3.client",
     "openshift.client",
